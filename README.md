@@ -62,7 +62,7 @@ See [browser modules][mdn_es6] for using es6 imports in the browser or use a ded
 ## Quick Start
 
 ```js
-import { stage } from 'foxy';
+import { stage, svgStar } from "foxy";
 ```
 
 <details><summary><b>Plain HTML</b></summary>
@@ -72,16 +72,16 @@ import { stage } from 'foxy';
 
 <script src="https://cdn.jsdelivr.net/npm/foxy"></script>
 <script>
-  const container = document.getElementById('container');
+  const container = document.getElementById("container");
   const stage = new stage(container);
-  const rect = stage.Rect({
+  const star = new svgStar({
     x: 100,
     y: 100,
     width: 60,
     height: 70,
-    fill: 'red',
+    fill: "red",
   });
-  stage.add(rect);
+  stage.add(star);
 </script>
 ```
 
@@ -90,20 +90,37 @@ import { stage } from 'foxy';
 <details><summary><b>ReactJS</b></summary>
 
 ```js
-import React, { useEffect, useRef } from 'react';
-import { stage } from 'foxy';
+import React, { useRef } from "react";
+import { Stage, svgStar } from "foxy";
 
-export const foxyjsRender = () => {
-  const stage = useRef<stage>(null);
-  useEffect(() => {
-    const options = { ... };
-    const canvas = new stage(stage, options);
+class App extends React.Component<Props, State> {
+  constructor(props: Props) {
+    super(props);
+  }
 
-  }, []);
+  componentDidMount() {
+    const board = document.querySelector("#board");
+    const stage = new Stage(board);
+    const star = new svgStar({
+      x: 100,
+      y: 100,
+      width: 60,
+      height: 70,
+      fill: "red",
+    });
+    stage.add(star);
+  }
 
-  return <div width="100vw" height="100vh" ref={stage}/>;
-};
+  render = () => {
+    return (
+      <div className="App">
+        <div id="board"></div>
+      </div>
+    );
+  };
+}
 
+export default App;
 ```
 
 </details>
@@ -111,19 +128,19 @@ export const foxyjsRender = () => {
 <details><summary><b>Vue2</b></summary>
 
 ```js
-import { stage } from 'foxy';
+import { stage, svgStar } from "foxy";
 
 mounted(() => {
-  const container = document.getElementById('container');
+  const container = document.getElementById("container");
   const stage = new stage(container);
-  const rect = stage.Rect({
+  const star = new svgStar({
     x: 100,
     y: 100,
     width: 60,
     height: 70,
-    fill: 'red',
+    fill: "red",
   });
-  stage.add(rect);
+  stage.add(star);
 });
 ```
 
@@ -136,20 +153,20 @@ mounted(() => {
   <div id="container"></div>
 </template>;
 
-import { computed, onMounted, ref } from 'vue';
-import { stage } from 'foxy';
+import { computed, onMounted, ref } from "vue";
+import { stage, svgStar } from "foxy";
 
 onMounted(() => {
-  const container = document.getElementById('container');
+  const container = document.getElementById("container");
   const stage = new stage(container);
-  const rect = stage.Rect({
+  const star = new svgStar({
     x: 100,
     y: 100,
     width: 60,
     height: 70,
-    fill: 'red',
+    fill: "red",
   });
-  stage.add(rect);
+  stage.add(star);
 });
 ```
 
