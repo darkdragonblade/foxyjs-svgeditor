@@ -1,6 +1,10 @@
 # foxy.js
 
-<a href="http://foxy.com/kitchensink" target="_blank"><img align="right" src="/lib/screenshot.png" style="width:400px"></a>
+<div><img align="left" src="https://github.com/darkdragonblade/foxyjs-svgeditor/blob/main/static/images/gif.gif" style="width:400px"></div>
+
+<div><img align="left" src="https://github.com/darkdragonblade/foxyjs-svgeditor/blob/main/static/images/img1.png" style="width:400px"></div>
+
+<div><img align="left" src="https://github.com/darkdragonblade/foxyjs-svgeditor/blob/main/static/images/img2.png" style="width:400px"></div>
 
 A **simple and powerful Javascript HTML5 SVG library**.
 
@@ -34,14 +38,12 @@ A **simple and powerful Javascript HTML5 SVG library**.
 ## Installation
 
 ```bash
-$ npm install foxy --save
+$ npm install foxyjs --save
 // or
-$ yarn add foxy
+$ yarn add foxyjs
 ```
 
 #### Browser
-
-[![cdnjs](https://img.shields.io/cdnjs/v/fabric.js.svg)][cdnjs] [![jsdelivr](https://data.jsdelivr.com/v1/package/npm/fabric/badge)][jsdelivr]
 
 See [browser modules][mdn_es6] for using es6 imports in the browser or use a dedicated bundler.
 
@@ -68,6 +70,8 @@ import { stage, svgStar } from "foxy";
     fill: "red",
   });
   stage.add(star);
+  stage.selectedElements.set(star);
+  stage.toggleTool("transform-tool");
 </script>
 ```
 
@@ -95,6 +99,8 @@ class App extends React.Component<Props, State> {
       fill: "red",
     });
     stage.add(star);
+    stage.selectedElements.set(star);
+    stage.toggleTool("transform-tool");
   }
 
   render = () => {
@@ -131,6 +137,8 @@ mounted(() => {
     fill: "red",
   });
   stage.add(star);
+  stage.selectedElements.set(star);
+  stage.toggleTool("transform-tool");
 });
 ```
 
@@ -157,6 +165,8 @@ onMounted(() => {
     fill: "red",
   });
   stage.add(star);
+  stage.selectedElements.set(star);
+  stage.toggleTool("transform-tool");
 });
 ```
 
