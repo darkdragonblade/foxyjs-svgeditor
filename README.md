@@ -4,7 +4,6 @@
 
 ![example](https://darkdragonblade.github.io/foxyjs-svgeditor/static/gif.gif)
 ![example](https://darkdragonblade.github.io/foxyjs-svgeditor/static/img1.png)
-![example](https://darkdragonblade.github.io/foxyjs-svgeditor/static/img2.png)
 
 A **simple and powerful Javascript HTML5 SVG library**.
 
