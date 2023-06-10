@@ -10,20 +10,6 @@ A **simple and powerful Javascript HTML5 SVG library**.
 
 ---
 
-<!-- build/coverage status, climate -->
-
-[![🩺](../../actions/workflows/build.yml/badge.svg)](../../actions/workflows/build.yml) [![🧪](../../actions/workflows/tests.yml/badge.svg)](../../actions/workflows/tests.yml) [![CodeQL](../../actions/workflows/codeql-analysis.yml/badge.svg)](../../actions/workflows/codeql-analysis.yml)
-
----
-
-[![NPM](https://badge.fury.io/js/fabric.svg)](http://badge.fury.io/js/fabric) [![Downloads per month](https://img.shields.io/npm/dm/fabric.svg)](https://www.npmjs.org/package/fabric) [![Bower](https://badge.fury.io/bo/fabric.svg)](http://badge.fury.io/bo/fabric)
-
----
-
-[![Sponsor asturur](https://img.shields.io/static/v1?label=Sponsor%20asturur&message=%E2%9D%A4&logo=GitHub&color=%23fe8e86)](https://github.com/sponsors/asturur) [![Sponsor melchiar](https://img.shields.io/static/v1?label=Sponsor%20melchiar&message=%E2%9D%A4&logo=GitHub&color=%23fe8e86)](https://github.com/sponsors/melchiar)
-
----
-
 ## Features
 
 - Out of the box interactions such as scale, move, rotate, skew, group...
@@ -128,6 +114,10 @@ export default App;
 <details><summary><b>Vue2</b></summary>
 
 ```js
+<template>
+  <div id="container"></div>
+</template>;
+
 import { stage, svgStar } from "foxy";
 
 mounted(() => {
@@ -180,8 +170,7 @@ See our ready to use [templates](./.codesandbox/templates/).
 
 - [Demos on `foxyjs.com`][demos]
 
-[demos]: http://foxyjs.com/demos/
+[demos]: https://github.com/darkdragonblade/foxyjs-svgeditor/demos/
 [mdn_es6]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Modules
-[melchiar]: https://github.com/melchiar
-[website]: http://foxyjs.com/
-[websiteCN]: http://foxyjs.com/
+[website]: https://github.com/darkdragonblade/foxyjs-svgeditor
+[websiteCN]: https://github.com/darkdragonblade/foxyjs-svgeditor
