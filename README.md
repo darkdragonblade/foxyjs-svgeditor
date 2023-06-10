@@ -48,7 +48,7 @@ See [browser modules][mdn_es6] for using es6 imports in the browser or use a ded
 ## Quick Start
 
 ```js
-import { stage, SVGStar } from "foxy";
+import { stage, SVGStar } from "foxyjs";
 ```
 
 <details><summary><b>Plain HTML</b></summary>
@@ -77,7 +77,7 @@ import { stage, SVGStar } from "foxy";
 
 ```js
 import React, { useRef } from "react";
-import { Stage, SVGStar } from "foxy";
+import { Stage, SVGStar } from "foxyjs";
 
 class App extends React.Component<Props, State> {
   constructor(props: Props) {
@@ -120,7 +120,7 @@ export default App;
   <div id="container"></div>
 </template>;
 
-import { stage, SVGStar } from "foxy";
+import { stage, SVGStar } from "foxyjs";
 
 mounted(() => {
   const container = document.getElementById("container");
@@ -148,7 +148,7 @@ mounted(() => {
 </template>;
 
 import { computed, onMounted, ref } from "vue";
-import { stage, SVGStar } from "foxy";
+import { stage, SVGStar } from "foxyjs";
 
 onMounted(() => {
   const container = document.getElementById("container");
