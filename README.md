@@ -48,7 +48,7 @@ See [browser modules][mdn_es6] for using es6 imports in the browser or use a ded
 ## Quick Start
 
 ```js
-import { stage, svgStar } from "foxy";
+import { stage, SVGStar } from "foxy";
 ```
 
 <details><summary><b>Plain HTML</b></summary>
@@ -58,7 +58,7 @@ import { stage, svgStar } from "foxy";
 <script>
   const container = document.getElementById("container");
   const stage = new stage(container);
-  const star = new svgStar({
+  const star = new SVGStar({
     x: 100,
     y: 100,
     width: 60,
@@ -77,7 +77,7 @@ import { stage, svgStar } from "foxy";
 
 ```js
 import React, { useRef } from "react";
-import { Stage, svgStar } from "foxy";
+import { Stage, SVGStar } from "foxy";
 
 class App extends React.Component<Props, State> {
   constructor(props: Props) {
@@ -87,7 +87,7 @@ class App extends React.Component<Props, State> {
   componentDidMount() {
     const board = document.querySelector("#board");
     const stage = new Stage(board);
-    const star = new svgStar({
+    const star = new SVGStar({
       x: 100,
       y: 100,
       width: 60,
@@ -120,12 +120,12 @@ export default App;
   <div id="container"></div>
 </template>;
 
-import { stage, svgStar } from "foxy";
+import { stage, SVGStar } from "foxy";
 
 mounted(() => {
   const container = document.getElementById("container");
   const stage = new stage(container);
-  const star = new svgStar({
+  const star = new SVGStar({
     x: 100,
     y: 100,
     width: 60,
@@ -148,12 +148,12 @@ mounted(() => {
 </template>;
 
 import { computed, onMounted, ref } from "vue";
-import { stage, svgStar } from "foxy";
+import { stage, SVGStar } from "foxy";
 
 onMounted(() => {
   const container = document.getElementById("container");
   const stage = new stage(container);
-  const star = new svgStar({
+  const star = new SVGStar({
     x: 100,
     y: 100,
     width: 60,
