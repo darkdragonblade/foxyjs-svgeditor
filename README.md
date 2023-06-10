@@ -3,7 +3,6 @@
 # example
 
 ![example](https://darkdragonblade.github.io/foxyjs-svgeditor/static/gif.gif)
-![example](https://darkdragonblade.github.io/foxyjs-svgeditor/static/img1.png)
 
 A **simple and powerful Javascript HTML5 SVG library**.
 
@@ -56,8 +55,6 @@ import { stage, svgStar } from "foxy";
 
 ```html
 <div id="container" width="100vw" height="100vh"></div>
-
-<script src="https://cdn.jsdelivr.net/npm/foxy"></script>
 <script>
   const container = document.getElementById("container");
   const stage = new stage(container);
