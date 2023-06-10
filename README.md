@@ -48,7 +48,7 @@ See [browser modules][mdn_es6] for using es6 imports in the browser or use a ded
 ## Quick Start
 
 ```js
-import { stage, SVGStar } from "foxyjs";
+import { Stage, SVGStar } from "foxyjs";
 ```
 
 <details><summary><b>Plain HTML</b></summary>
@@ -57,7 +57,7 @@ import { stage, SVGStar } from "foxyjs";
 <div id="container" width="100vw" height="100vh"></div>
 <script>
   const container = document.getElementById("container");
-  const stage = new stage(container);
+  const stage = new Stage(container);
   const star = new SVGStar({
     x: 100,
     y: 100,
@@ -65,7 +65,7 @@ import { stage, SVGStar } from "foxyjs";
     height: 70,
     fill: "red",
   });
-  stage.add(star);
+  stage.addGraph(star);
   stage.selectedElements.set(star);
   stage.toggleTool("transform-tool");
 </script>
@@ -94,7 +94,7 @@ class App extends React.Component<Props, State> {
       height: 70,
       fill: "red",
     });
-    stage.add(star);
+    stage.addGraph(star);
     stage.selectedElements.set(star);
     stage.toggleTool("transform-tool");
   }
@@ -120,11 +120,11 @@ export default App;
   <div id="container"></div>
 </template>;
 
-import { stage, SVGStar } from "foxyjs";
+import { Stage, SVGStar } from "foxyjs";
 
 mounted(() => {
   const container = document.getElementById("container");
-  const stage = new stage(container);
+  const stage = new Stage(container);
   const star = new SVGStar({
     x: 100,
     y: 100,
@@ -132,7 +132,7 @@ mounted(() => {
     height: 70,
     fill: "red",
   });
-  stage.add(star);
+  stage.addGraph(star);
   stage.selectedElements.set(star);
   stage.toggleTool("transform-tool");
 });
@@ -148,11 +148,11 @@ mounted(() => {
 </template>;
 
 import { computed, onMounted, ref } from "vue";
-import { stage, SVGStar } from "foxyjs";
+import { Stage, SVGStar } from "foxyjs";
 
 onMounted(() => {
   const container = document.getElementById("container");
-  const stage = new stage(container);
+  const stage = new Stage(container);
   const star = new SVGStar({
     x: 100,
     y: 100,
@@ -160,7 +160,7 @@ onMounted(() => {
     height: 70,
     fill: "red",
   });
-  stage.add(star);
+  stage.addGraph(star);
   stage.selectedElements.set(star);
   stage.toggleTool("transform-tool");
 });
