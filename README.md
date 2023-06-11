@@ -481,4 +481,4 @@ stage.toogleTool(type);
 
 ```
 
-<img src="https://darkdragonblade.github.io/foxyjs-svgeditor/static/transform-tool.gif"/>
+![example](https://darkdragonblade.github.io/foxyjs-svgeditor/static/transform-tool.gif)
