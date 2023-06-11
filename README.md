@@ -477,7 +477,7 @@ stage.addGraph(new SVGPolygon(config));
 
 ```
 const type = 'transform-tool';
-stage.toogleTool(type);
+stage.toggleTool(type);
 ```
 
 ###### How to get selectedElements？
