@@ -478,7 +478,27 @@ stage.addGraph(new SVGPolygon(config));
 ```
 const type = 'transform-tool';
 stage.toogleTool(type);
+```
 
+###### How to get selectedElements？
+
+```
+const elements = Array.from(stage.selectedElements.keys());
+console.log(elements);
+```
+
+###### How to get selectedelementschange？
+
+```
+stage.board.addEventListener('selectedelementschange',()=>{
+//do something
+});
+```
+
+###### How to delete selectedelements
+
+```
+stage.commands.delete();
 ```
 
 ![example](https://darkdragonblade.github.io/foxyjs-svgeditor/static/transform-tool.gif)
