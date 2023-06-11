@@ -183,6 +183,8 @@ See our ready to use [templates](./.codesandbox/templates/).
 
 ## Doc Api
 
+### Shape
+
 ##### Class: SVGText
 
 ```
@@ -468,3 +470,15 @@ stage.addGraph(new SVGPolygon(config));
 | height | number | 100     |
 | fill   | string | blue    | fill color   |
 | stroke | string | #000000 | stroke color |
+
+### Tools
+
+###### transformTool
+
+```
+const type = 'transform-tool';
+stage.toogleTool(type);
+
+```
+
+<img src="https://darkdragonblade.github.io/foxyjs-svgeditor/static/transform-tool.gif"/>
