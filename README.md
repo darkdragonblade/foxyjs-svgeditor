@@ -471,13 +471,30 @@ stage.addGraph(new SVGPolygon(config));
 | fill   | string | blue    | fill color   |
 | stroke | string | #000000 | stroke color |
 
-### Tools
+# Tools
 
-###### transformTool
+###### TransformTool
 
 ```
 const type = 'transform-tool';
 stage.toggleTool(type);
+```
+
+###### How to selectedelements
+
+```
+const rect = new SVGRect(config);
+stage.addGraph(rect);
+stage.selectedElements.set(rect);
+```
+
+###### How to clear selectedElements？
+
+```
+//clear one
+stage.selectedElements.delete(rect);
+//clearAll
+stage.selectedElements.clear();
 ```
 
 ###### How to get selectedElements？
