@@ -473,7 +473,7 @@ stage.addGraph(new SVGPolygon(config));
 
 # Tools
 
-###### TransformTool
+### TransformTool
 
 ```
 const type = 'transform-tool';
@@ -519,3 +519,31 @@ stage.commands.delete();
 ```
 
 ![example](https://darkdragonblade.github.io/foxyjs-svgeditor/static/transform-tool.gif)
+
+### ShapeTool
+
+```
+const type = 'rect-tool';
+stage.toggleTool(type);
+```
+
+| NAME          | TYPE   | DESCRIBE              |
+| ------------- | ------ | --------------------- |
+| rect-tool     | string | draw rect             |
+| ellipse-tool  | string | draw ellipse          |
+| text-tool     | string | add text or edit text |
+| triangle-tool | string | draw triangle         |
+| n-gon-tool    | string | draw trapezoid        |
+| star-tool     | string | draw star             |
+| cross-tool    | string | draw cross            |
+| frame-tool    | string | draw frame            |
+| ring-tool     | string | draw ring             |
+| pie-tool      | string | draw pie              |
+| crescent-tool | string | draw crescent         |
+| cog-tool      | string | draw cog              |
+| spiral-tool   | string | draw spiral           |
+| arrow-tool    | string | draw arrow            |
+| frenhand-tool | string | free draw             |
+| pen-tool      | string | cubic bezier          |
+| path-tool     | string | disabled              |
+| line-tool     | string | disabled              |
