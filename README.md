@@ -547,6 +547,13 @@ stage.commands.delete();
 
 ![example](https://darkdragonblade.github.io/foxyjs-svgeditor/static/transform-tool.gif)
 
+### Pantool
+
+```
+const type = 'pan-tool';
+stage.toggleTool(type);
+```
+
 ### ShapeTool
 
 ```
@@ -570,7 +577,7 @@ stage.toggleTool(type);
 | cog-tool      | string | draw cog              |
 | spiral-tool   | string | draw spiral           |
 | arrow-tool    | string | draw arrow            |
-| frenhand-tool | string | free draw             |
+| freehand-tool | string | free draw             |
 | pen-tool      | string | cubic bezier          |
 | path-tool     | string | disabled              |
 | line-tool     | string | disabled              |
