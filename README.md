@@ -180,3 +180,291 @@ See our ready to use [templates](./.codesandbox/templates/).
 [mdn_es6]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Modules
 [website]: https://github.com/darkdragonblade/foxyjs-svgeditor
 [websiteCN]: https://github.com/darkdragonblade/foxyjs-svgeditor
+
+## Doc Api
+
+##### Class: SVGText
+
+```
+stage.addGraph(new SVGText(config));
+```
+
+##### SVGText config
+
+| NAME        | TYPE   | DEFAULT | DESCRIBE     |
+| ----------- | ------ | ------- | ------------ |
+| x           | number | 0       | X-axis       |
+| y           | number | 0       | Y-axis       |
+| fontSize    | string | 100     | 28px         |
+| fontFamily  | string | 100     | Arial        |
+| fill        | string | blue    | fill color   |
+| stroke      | string | #000000 | stroke color |
+| textContent | string | foxyjs  | textContent  |
+
+##### Class: SVGImage
+
+```
+stage.addGraph(new SVGImage(config));
+```
+
+##### SVGImage config
+
+| NAME   | TYPE   | DEFAULT | DESCRIBE     |
+| ------ | ------ | ------- | ------------ |
+| x      | number | 0       | X-axis       |
+| y      | number | 0       | Y-axis       |
+| width  | number | 100     |
+| height | number | 100     |
+| href   | string | empty   | url          |
+| fill   | string | blue    | fill color   |
+| stroke | string | #000000 | stroke color |
+
+##### Class: SVGRect
+
+```
+stage.addGraph(new SVGRect(config));
+```
+
+##### SVGRect config
+
+| NAME   | TYPE   | DEFAULT | DESCRIBE     |
+| ------ | ------ | ------- | ------------ |
+| x      | number | 0       | X-axis       |
+| y      | number | 0       | Y-axis       |
+| width  | number | 100     |              |
+| height | number | 100     |              |
+| rx     | number | 0       | fillet       |
+| fill   | string | blue    | fill color   |
+| stroke | string | #000000 | stroke color |
+
+##### Class: SVGCircle
+
+```
+stage.addGraph(new SVGCircle(config));
+```
+
+##### SVGCircle config
+
+| NAME   | TYPE   | DEFAULT | DESCRIBE     |
+| ------ | ------ | ------- | ------------ |
+| x      | number | 0       | X-axis       |
+| y      | number | 0       | Y-axis       |
+| r      | number | 100     | radius       |
+| fill   | string | blue    | fill color   |
+| stroke | string | #000000 | stroke color |
+
+##### Class: SVGEllipse
+
+```
+stage.addGraph(new SVGEllipse(config));
+```
+
+##### SVGEllipse config
+
+| NAME   | TYPE   | DEFAULT | DESCRIBE     |
+| ------ | ------ | ------- | ------------ |
+| x      | number | 0       | X-axis       |
+| y      | number | 0       | Y-axis       |
+| rx     | number | 100     | X-radius     |
+| ry     | number | 100     | Y-radius     |
+| fill   | string | blue    | fill color   |
+| stroke | string | #000000 | stroke color |
+
+##### Class: SVGRing
+
+```
+stage.addGraph(new SVGRing(config));
+```
+
+##### SVGRing config
+
+| NAME   | TYPE   | DEFAULT | DESCRIBE     |
+| ------ | ------ | ------- | ------------ |
+| x      | number | 0       | X-axis       |
+| y      | number | 0       | Y-axis       |
+| rx     | number | 100     | X-radius     |
+| ry     | number | 100     | Y-radius     |
+| fill   | string | blue    | fill color   |
+| stroke | string | #000000 | stroke color |
+
+##### Class: SVGPie
+
+```
+stage.addGraph(new SVGPie(config));
+```
+
+##### SVGPie config
+
+| NAME   | TYPE   | DEFAULT | DESCRIBE     |
+| ------ | ------ | ------- | ------------ |
+| x      | number | 0       | X-axis       |
+| y      | number | 0       | Y-axis       |
+| fill   | string | blue    | fill color   |
+| stroke | string | #000000 | stroke color |
+
+##### Class: SVGCrescent
+
+```
+stage.addGraph(new SVGCrescent(config));
+```
+
+##### SVGCrescent config
+
+| NAME   | TYPE   | DEFAULT | DESCRIBE     |
+| ------ | ------ | ------- | ------------ |
+| x      | number | 0       | X-axis       |
+| y      | number | 0       | Y-axis       |
+| fill   | string | blue    | fill color   |
+| stroke | string | #000000 | stroke color |
+
+##### Class: SVGTriangle
+
+```
+stage.addGraph(new SVGTriangle(config));
+```
+
+##### SVGTriangle config
+
+| NAME   | TYPE   | DEFAULT | DESCRIBE     |
+| ------ | ------ | ------- | ------------ |
+| x      | number | 0       | X-axis       |
+| y      | number | 0       | Y-axis       |
+| width  | number | 100     |
+| height | number | 100     |
+| fill   | string | blue    | fill color   |
+| stroke | string | #000000 | stroke color |
+
+##### Class: SVGNGon
+
+```
+stage.addGraph(new SVGNGon(config));
+```
+
+##### SVGNGon config
+
+| NAME   | TYPE   | DEFAULT | DESCRIBE     |
+| ------ | ------ | ------- | ------------ |
+| x      | number | 0       | X-axis       |
+| y      | number | 0       | Y-axis       |
+| width  | number | 100     |
+| height | number | 100     |
+| nums   | number | 5       |
+| fill   | string | blue    | fill color   |
+| stroke | string | #000000 | stroke color |
+
+##### Class: SVGStar
+
+```
+stage.addGraph(new SVGStar(config));
+```
+
+##### SVGStar config
+
+| NAME   | TYPE   | DEFAULT | DESCRIBE     |
+| ------ | ------ | ------- | ------------ |
+| x      | number | 0       | X-axis       |
+| y      | number | 0       | Y-axis       |
+| width  | number | 100     |
+| height | number | 100     |
+| nums   | number | 5       |
+| fill   | string | blue    | fill color   |
+| stroke | string | #000000 | stroke color |
+
+##### Class: SVGCog
+
+```
+stage.addGraph(new SVGCog(config));
+```
+
+##### SVGCog config
+
+| NAME   | TYPE   | DEFAULT | DESCRIBE     |
+| ------ | ------ | ------- | ------------ |
+| x      | number | 0       | X-axis       |
+| y      | number | 0       | Y-axis       |
+| fill   | string | blue    | fill color   |
+| stroke | string | #000000 | stroke color |
+
+##### Class: SVGCross
+
+```
+stage.addGraph(new SVGCross(config));
+```
+
+##### SVGCross config
+
+| NAME   | TYPE   | DEFAULT | DESCRIBE     |
+| ------ | ------ | ------- | ------------ |
+| x      | number | 0       | X-axis       |
+| y      | number | 0       | Y-axis       |
+| width  | number | 100     |
+| height | number | 100     |
+| fill   | string | blue    | fill color   |
+| stroke | string | #000000 | stroke color |
+
+##### Class: SVGSpiral
+
+```
+stage.addGraph(new SVGSpiral(config));
+```
+
+##### SVGSpiral config
+
+| NAME   | TYPE   | DEFAULT | DESCRIBE     |
+| ------ | ------ | ------- | ------------ |
+| x      | number | 0       | X-axis       |
+| y      | number | 0       | Y-axis       |
+| r      | number | 50      | radius       |
+| fill   | string | blue    | fill color   |
+| stroke | string | #000000 | stroke color |
+
+##### Class: SVGLine
+
+```
+stage.addGraph(new SVGLine(config));
+```
+
+##### SVGLine config
+
+| NAME   | TYPE   | DEFAULT | DESCRIBE     |
+| ------ | ------ | ------- | ------------ |
+| x      | number | 0       | X-axis       |
+| y      | number | 0       | Y-axis       |
+| width  | number | 100     |
+| height | number | 100     |
+| fill   | string | blue    | fill color   |
+| stroke | string | #000000 | stroke color |
+
+##### Class: SVGPolyline
+
+```
+stage.addGraph(new SVGPolyline(config));
+```
+
+##### SVGPolyline config
+
+| NAME   | TYPE   | DEFAULT | DESCRIBE     |
+| ------ | ------ | ------- | ------------ |
+| x      | number | 0       | X-axis       |
+| y      | number | 0       | Y-axis       |
+| width  | number | 100     |
+| height | number | 100     |
+| fill   | string | blue    | fill color   |
+| stroke | string | #000000 | stroke color |
+
+##### Class: SVGPolygon
+
+```
+stage.addGraph(new SVGPolygon(config));
+```
+
+##### SVGPolygon config
+
+| NAME   | TYPE   | DEFAULT | DESCRIBE     |
+| ------ | ------ | ------- | ------------ |
+| x      | number | 0       | X-axis       |
+| y      | number | 0       | Y-axis       |
+| width  | number | 100     |
+| height | number | 100     |
+| fill   | string | blue    | fill color   |
+| stroke | string | #000000 | stroke color |
