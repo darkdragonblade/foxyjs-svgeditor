@@ -4,9 +4,7 @@
 
 A **simple and powerful Javascript HTML5 SVG library**.
 
-- [**Website**][website]
-- [**中文网站**][websiteCN]
-- [**Contributing, Developing and More**](CONTRIBUTING.md)
+- [Website][transformTool]
 
 ---
 
@@ -172,8 +170,8 @@ See our ready to use [templates](./.codesandbox/templates/).
 
 ## More Resources
 
-- [**base shape**][shape]
-- [**drag ,drop,scale,rotate,skew,hover**][transformTool]
+- [base shape][shape]
+- [drag ,drop,scale,rotate,skew,hover][transformTool]
 
 [mdn_es6]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Modules
 [website]: https://github.com/darkdragonblade/foxyjs-svgeditor
