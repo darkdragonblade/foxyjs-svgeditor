@@ -172,16 +172,11 @@ See our ready to use [templates](./.codesandbox/templates/).
 
 ## More Resources
 
-- [Demos on `foxyjs.com`][demos]
+- [**base shape**][shape]
+- [**drag ,drop,scale,rotate,skew,hover**][transformTool]
 
-[demos]: https://github.com/darkdragonblade/foxyjs-svgeditor/demos/
 [mdn_es6]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Modules
 [website]: https://github.com/darkdragonblade/foxyjs-svgeditor
 [websiteCN]: https://github.com/darkdragonblade/foxyjs-svgeditor
 [shape]: https://darkdragonblade.github.io/foxyjs-svgeditor/demos/shape.html
 [transformTool]: https://darkdragonblade.github.io/foxyjs-svgeditor/demos/transformTool.html
-
-## demos
-
-- [**base shape**][shape]
-- [**drag ,drop,scale,rotate,skew,hover**][transformTool]
