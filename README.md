@@ -1,7 +1,5 @@
 # foxyjs
 
-### example
-
 ![example](https://darkdragonblade.github.io/foxyjs-svgeditor/static/gif.gif)
 
 A **simple and powerful Javascript HTML5 SVG library**.
@@ -181,10 +179,12 @@ See our ready to use [templates](./.codesandbox/templates/).
 [website]: https://github.com/darkdragonblade/foxyjs-svgeditor
 [websiteCN]: https://github.com/darkdragonblade/foxyjs-svgeditor
 [shape]: https://darkdragonblade.github.io/foxyjs-svgeditor/demos/shape.html
+[transformTool]: https://darkdragonblade.github.io/foxyjs-svgeditor/demos/transformTool.html
 
-## Usage
+## demos
 
 - [**base shape**][shape]
+- [**drag ,drop,scale,rotate,skew,hover**][transformTool]
 
 # Tools
 
