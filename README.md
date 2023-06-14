@@ -1,70 +1,172 @@
-# Getting Started with Create React App
+# foxyjs
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+![example](https://darkdragonblade.github.io/foxyjs-svgeditor/static/gif.gif)
 
-## Available Scripts
+A **simple and powerful Javascript HTML5 SVG library**.
 
-In the project directory, you can run:
+- [online demo][onlineDemo]
 
-### `npm start`
+---
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+## Features
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+- Out of the box interactions such as scale, move, rotate, skew, group...
+- Built in shapes, controls, animations, image filters, gradients, patterns, brushes...
+- `JPG`, `PNG`, `JSON` and `CANVAS` , `PDF` , `DFX` , `AI(adobe illustrator)`
+- [Typed and modular](#migrating-to-v6)
+- [Unit tested](CONTRIBUTING.md#%F0%9F%A7%AA%20testing)
 
-### `npm test`
+#### Supported Browsers/Environments
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+|   Context   | Supported Version | Notes                           |
+| :---------: | :---------------: | ------------------------------- |
+|   Firefox   |        ✔️         | modern version (tbd)            |
+|   Safari    |        ✔️         | version >= 10.1                 |
+|    Opera    |        ✔️         | chromium based                  |
+|   Chrome    |        ✔️         | modern version (tbd)            |
+|    Edge     |        ✔️         | chromium based                  |
+| Edge Legacy |        ❌         |
+|    IE11     |        ❌         |
+|   Node.js   |        ✔️         | [Node.js installation](#nodejs) |
 
-### `npm run build`
+## Installation
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+```bash
+$ npm install foxyjs --save
+// or
+$ yarn add foxyjs
+```
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+#### Browser
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+See [browser modules][mdn_es6] for using es6 imports in the browser or use a dedicated bundler.
 
-### `npm run eject`
+## Quick Start
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+```js
+import { Stage, SVGStar } from "foxyjs";
+```
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+<details><summary><b>Plain HTML</b></summary>
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+```html
+<div id="container" width="100vw" height="100vh"></div>
+<script>
+  const container = document.getElementById("container");
+  const stage = new Stage(container);
+  const star = new SVGStar({
+    x: 100,
+    y: 100,
+    rx: 60,
+    ry: 60,
+    fill: "red",
+  });
+  stage.addGraph(star);
+  stage.selectedElements.set(star);
+  stage.toggleTool("transform-tool");
+</script>
+```
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+</details>
 
-## Learn More
+<details><summary><b>ReactJS</b></summary>
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+```js
+import React, { useRef } from "react";
+import { Stage, SVGStar } from "foxyjs";
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+class App extends React.Component<Props, State> {
+  constructor(props: Props) {
+    super(props);
+  }
 
-### Code Splitting
+  componentDidMount() {
+    const board = document.querySelector("#board");
+    const stage = new Stage(board);
+    const star = new SVGStar({
+      x: 100,
+      y: 100,
+      rx: 60,
+      ry: 60,
+      fill: "red",
+    });
+    stage.addGraph(star);
+    stage.selectedElements.set(star);
+    stage.toggleTool("transform-tool");
+  }
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+  render = () => {
+    return (
+      <div className="App">
+        <div id="board"></div>
+      </div>
+    );
+  };
+}
 
-### Analyzing the Bundle Size
+export default App;
+```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+</details>
 
-### Making a Progressive Web App
+<details><summary><b>Vue2</b></summary>
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+```js
+<template>
+  <div id="container"></div>
+</template>;
 
-### Advanced Configuration
+import { Stage, SVGStar } from "foxyjs";
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
+mounted(() => {
+  const container = document.getElementById("container");
+  const stage = new Stage(container);
+  const star = new SVGStar({
+    x: 100,
+    y: 100,
+    rx: 60,
+    ry: 60,
+    fill: "red",
+  });
+  stage.addGraph(star);
+  stage.selectedElements.set(star);
+  stage.toggleTool("transform-tool");
+});
+```
 
-### Deployment
+</details>
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
+<details><summary><b>Vue3</b></summary>
 
-### `npm run build` fails to minify
+```js
+<template>
+  <div id="container"></div>
+</template>;
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+import { computed, onMounted, ref } from "vue";
+import { Stage, SVGStar } from "foxyjs";
+
+onMounted(() => {
+  const container = document.getElementById("container");
+  const stage = new Stage(container);
+  const star = new SVGStar({
+    x: 100,
+    y: 100,
+    rx: 60,
+    ry: 60,
+    fill: "red",
+  });
+  stage.addGraph(star);
+  stage.selectedElements.set(star);
+  stage.toggleTool("transform-tool");
+});
+```
+
+</details>
+
+See our ready to use [templates](./.codesandbox/templates/).
+
+---
+
+[mdn_es6]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Modules
+[onlineDemo]: https://darkdragonblade.github.io/foxyjs-svgeditor/demo/index.html
