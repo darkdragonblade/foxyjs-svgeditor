@@ -1,0 +1,36 @@
+.toolbar {
+    background-color: #fcfcfc;
+    box-shadow: 0 0 4px #cccccc;
+    position: absolute;
+    left: 32px;
+    top: 32px;
+    display: flex;
+    flex-direction: column;
+    z-index: 1;
+}
+
+.toolbar .item{
+    width:32px;
+    height:32px;
+    background-color: #fcfcfc;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    color:#333333;
+    cursor: pointer;
+    border-bottom: 1px solid #dfdfdf;
+    transition: all .34s;
+}
+
+.toolbar .item:last-child{
+    border-bottom: 0;
+}
+
+.toolbar .item:hover{
+    background-color: #efefef;
+}
+
+.toolbar .item.active{
+    background-color: #6ca3ff;
+    color:#ffffff;
+}

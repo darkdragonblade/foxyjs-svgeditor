@@ -1,0 +1,24 @@
+.App{
+  display: flex;
+  flex-flow: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  user-select: none;
+}
+
+#editor{
+  width: 100%;
+  height:100%;
+  flex: 1 1 0%;
+  position: relative;
+}
+
+.board{
+  flex: 1 1 0%;
+  contain: strict;
+  width:100%;
+  height:100%;
+}
+
+
