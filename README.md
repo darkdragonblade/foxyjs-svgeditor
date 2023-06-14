@@ -4,7 +4,8 @@
 
 A **simple and powerful Javascript HTML5 SVG library**.
 
-- [online demo][onlineDemo]
+- [online demo(editor)][onlineDemo]
+- [reactjs use templates][reactjs]
 
 ---
 
@@ -13,8 +14,6 @@ A **simple and powerful Javascript HTML5 SVG library**.
 - Out of the box interactions such as scale, move, rotate, skew, group...
 - Built in shapes, controls, animations, image filters, gradients, patterns, brushes...
 - `JPG`, `PNG`, `JSON` and `CANVAS` , `PDF` , `DFX` , `AI(adobe illustrator)`
-- [Typed and modular](#migrating-to-v6)
-- [Unit tested](CONTRIBUTING.md#%F0%9F%A7%AA%20testing)
 
 #### Supported Browsers/Environments
 
@@ -164,9 +163,8 @@ onMounted(() => {
 
 </details>
 
-See our ready to use [templates](./.codesandbox/templates/).
-
 ---
 
 [mdn_es6]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Modules
 [onlineDemo]: https://darkdragonblade.github.io/foxyjs-svgeditor/demo/index.html
+[reactjs]: https://github.com/darkdragonblade/foxyjs-svgeditor/tree/main/src
