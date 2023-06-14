@@ -3,6 +3,7 @@ import React from 'react';
 import Toolbar from './components/toolbar';
 import Menubar from './components/menubar';
 import Actionbar from './components/actionbar';
+import Contextmenu from './components/contextmenu';
 import { Stage } from 'foxyjs';
 
 
@@ -25,13 +26,13 @@ class App extends React.Component {
   render() {
     return (
       <div className="App">
-        <Menubar />
+        {this.state.stage && <Menubar />}
         <div id="editor">
           {this.state.stage && <Toolbar />}
           <div className="board"></div>
           {this.state.stage && <Actionbar />}
         </div>
-
+        {this.state.stage && <Contextmenu />}
       </div>
     );
   }

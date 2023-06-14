@@ -9,10 +9,8 @@ class Toolbar extends React.Component {
 
     toggleTool(type) {
         window.stage.toggleTool(type);
-        this.setState({
-            currentTool: type
-        })
-    }
+    };
+
 
     componentDidMount() {
         const stage = window.stage;
@@ -22,6 +20,11 @@ class Toolbar extends React.Component {
             currentTool: stage.currentTool
         });
 
+        stage.board.addEventListener('currenttoolchange', () => {
+            this.setState({
+                currentTool: stage.currentTool
+            });
+        })
     }
 
     render() {

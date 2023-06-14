@@ -13,7 +13,7 @@ class Actionbar extends React.Component {
 
     render() {
         return (
-            <div className="board">
+            <div className="actionbar">
 
             </div>
         );
