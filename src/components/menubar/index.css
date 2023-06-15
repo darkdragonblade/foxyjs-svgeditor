@@ -23,6 +23,10 @@
     display: flex;
 }
 
+.menubar .item:focus .options{
+    display: none;
+}
+
 .menubar .item .title{
     width:100%;
     height:100%;
