@@ -7,7 +7,6 @@ class Contextmenu extends React.Component {
         this.state = {
             stage: void 0,
             active: false,
-            barActive: false,
             canGroup: false,
             canUnGroup: false,
             canRaise: false,
@@ -20,30 +19,29 @@ class Contextmenu extends React.Component {
 
     componentDidMount() {
         const stage = window.stage;
-        document.addEventListener('contextmenu', (event) => {
+        window.addEventListener('contextmenu', (event) => {
             event.preventDefault();
         })
-        document.addEventListener('pointerdown', (event) => {
+        stage.workspaces.addEventListener('pointerdown', (event) => {
 
             const { buttons, x, y } = event;
-
-            if (event.target.closest('.contextmenu-bar')) return;
+            if (event.target.closest('.contextmenu')) return;
 
             this.setState({
                 active: (buttons === 2 && this.state.active) ? true : false,
-                barActive: (buttons === 2 && this.state.barActive) ? true : false,
             });
             if (buttons === 2) {
 
-
-                // if (!stage.board.matches(':hover')) return;
+                const { bottom, right } = stage.board.getBoundingClientRect();
+                const { height, width } = document.querySelector('.contextmenu').getBoundingClientRect();
+                const dx = x + width > right ? y + width - right + 10 : 0;
+                const dy = y + height > bottom ? y + height - bottom + 10 : 0;
 
                 setTimeout(() => {
                     this.setState({
                         active: true,
-                        barActive: true,
-                        x,
-                        y,
+                        x: x - dx,
+                        y: y - dy,
                         selectedObjectElementsLength: stage.selectedObjectElements.size,
                         canGroup: stage.groupManager.canGroup(),
                         canUnGroup: stage.groupManager.canUnGroup(),
@@ -51,7 +49,7 @@ class Contextmenu extends React.Component {
                         canLower: stage.orderManager.canLower(),
                         canDelete: stage.commands.canDelete(),
                     });
-                }, 100);
+                }, 120);
             }
         });
     }
@@ -60,7 +58,6 @@ class Contextmenu extends React.Component {
         window.stage.clipboardManager.cut();
         this.setState({
             active: false,
-            barActive: false,
         });
     }
 
@@ -68,7 +65,6 @@ class Contextmenu extends React.Component {
         window.stage.clipboardManager.copy();
         this.setState({
             active: false,
-            barActive: false,
         });
     }
 
@@ -76,7 +72,6 @@ class Contextmenu extends React.Component {
         window.stage.clipboardManager.paste();
         this.setState({
             active: false,
-            barActive: false,
         });
     }
 
@@ -84,7 +79,6 @@ class Contextmenu extends React.Component {
         window.stage.groupManager.group();
         this.setState({
             active: false,
-            barActive: false,
         });
     }
 
@@ -92,7 +86,6 @@ class Contextmenu extends React.Component {
         window.stage.groupManager.unGroup();
         this.setState({
             active: false,
-            barActive: false,
         });
     }
 
@@ -100,7 +93,6 @@ class Contextmenu extends React.Component {
         window.stage.orderManager.raise();
         this.setState({
             active: false,
-            barActive: false,
         });
     }
 
@@ -108,7 +100,6 @@ class Contextmenu extends React.Component {
         window.stage.orderManager.raiseToFront();
         this.setState({
             active: false,
-            barActive: false,
         });
     }
 
@@ -116,7 +107,6 @@ class Contextmenu extends React.Component {
         window.stage.orderManager.lower();
         this.setState({
             active: false,
-            barActive: false,
         });
     }
 
@@ -124,7 +114,6 @@ class Contextmenu extends React.Component {
         window.stage.orderManager.lowerToBack();
         this.setState({
             active: false,
-            barActive: false,
         });
     }
 
@@ -132,48 +121,45 @@ class Contextmenu extends React.Component {
         window.stage.commands.delete();
         this.setState({
             active: false,
-            barActive: false,
         });
     }
 
     render() {
         return (
-            <div className={`contextmenu ${this.state.active && 'active'}`}>
-                <div style={{ 'left': this.state.x, 'top': this.state.y }} className={`contextmenu-bar ${this.state.barActive && 'active'}`}>
-                    <div className={`item ${this.state.selectedObjectElementsLength === 0 && 'disabled'}`} onClick={() => {
-                        this.cut();
-                    }}>cut</div>
-                    <div className={`item ${this.state.selectedObjectElementsLength === 0 && 'disabled'}`} onClick={() => {
-                        this.copy();
-                    }}>copy</div>
-                    <div className="item" onClick={() => {
-                        this.paste();
-                    }}>paste</div>
-                    <hr />
-                    <div className={`item ${!this.state.canGroup && 'disabled'}`} onClick={() => {
-                        this.group();
-                    }}>group</div>
-                    <div className={`item ${!this.state.canUnGroup && 'disabled'}`} onClick={() => {
-                        this.unGroup()
-                    }}>ungroup</div>
-                    <hr />
-                    <div className={`item ${!this.state.canRaise && 'disabled'}`} onClick={() => {
-                        this.raise();
-                    }}>raise</div>
-                    <div className={`item ${!this.state.canRaise && 'disabled'}`} onClick={() => {
-                        this.raiseToFront();
-                    }}>raiseToFront</div>
-                    <div className={`item ${!this.state.canLower && 'disabled'}`} onClick={() => {
-                        this.lower();
-                    }}>lower</div>
-                    <div className={`item ${!this.state.canLower && 'disabled'}`} onClick={() => {
-                        this.lowerToBack();
-                    }}>lowerToBack</div>
-                    <hr />
-                    <div className={`item ${!this.state.canDelete && 'disabled'}`} onClick={() => {
-                        this.delete();
-                    }}>delete</div>
-                </div>
+            <div style={{ 'left': this.state.x, 'top': this.state.y }} className={`contextmenu ${this.state.active && 'active'}`}>
+                <div className={`item ${this.state.selectedObjectElementsLength === 0 && 'disabled'}`} onClick={() => {
+                    this.cut();
+                }}>cut</div>
+                <div className={`item ${this.state.selectedObjectElementsLength === 0 && 'disabled'}`} onClick={() => {
+                    this.copy();
+                }}>copy</div>
+                <div className="item" onClick={() => {
+                    this.paste();
+                }}>paste</div>
+                <hr />
+                <div className={`item ${!this.state.canGroup && 'disabled'}`} onClick={() => {
+                    this.group();
+                }}>group</div>
+                <div className={`item ${!this.state.canUnGroup && 'disabled'}`} onClick={() => {
+                    this.unGroup()
+                }}>ungroup</div>
+                <hr />
+                <div className={`item ${!this.state.canRaise && 'disabled'}`} onClick={() => {
+                    this.raise();
+                }}>raise</div>
+                <div className={`item ${!this.state.canRaise && 'disabled'}`} onClick={() => {
+                    this.raiseToFront();
+                }}>raiseToFront</div>
+                <div className={`item ${!this.state.canLower && 'disabled'}`} onClick={() => {
+                    this.lower();
+                }}>lower</div>
+                <div className={`item ${!this.state.canLower && 'disabled'}`} onClick={() => {
+                    this.lowerToBack();
+                }}>lowerToBack</div>
+                <hr />
+                <div className={`item ${!this.state.canDelete && 'disabled'}`} onClick={() => {
+                    this.delete();
+                }}>delete</div>
             </div >
         );
     }

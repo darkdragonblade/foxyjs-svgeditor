@@ -2,32 +2,17 @@
     position: fixed;
     z-index: -999;
     background:none;
-    left:0;
-    top:0;
-    bottom:0;
-    right: 0;
+    background-color: #fcfcfc;
+    box-shadow: 0 0 10px #cccccc;
+    width: fit-content;
+    padding:0 6px;
 }
 
 .contextmenu.active{
     z-index: 999;
 }
 
-.contextmenu-bar{
-    background-color: #fcfcfc;
-    box-shadow: 0 0 10px #cccccc;
-    position: absolute;
-    opacity: 0;
-    width: fit-content;
-    padding:0 6px;
-}
-
-.contextmenu-bar.active{
-    transition-property: opacity;
-    transition-duration: .34s;
-    opacity: 1;
-}
-
-.contextmenu-bar .item{
+.contextmenu .item{
     min-height: 28px;
     padding:2px 10px ;
     display: flex;
@@ -35,12 +20,12 @@
     font-size: 13px;
 }
 
-.contextmenu-bar .item.disabled{
+.contextmenu .item.disabled{
     pointer-events: none;
     opacity: 0.4;
 }
 
-.contextmenu-bar .item:hover{
+.contextmenu .item:hover{
     background-color: #efefef;
 }
 
