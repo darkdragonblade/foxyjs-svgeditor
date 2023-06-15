@@ -1,6 +1,9 @@
 import React from "react";
 import "./index.css";
 import { SVGImage } from "foxyjs";
+import * as pdfjs from 'pdfjs-dist';
+import PDFWORKERENTRY from 'pdfjs-dist/build/pdf.worker.entry';
+pdfjs.GlobalWorkerOptions.workerSrc = PDFWORKERENTRY;
 class Menubar extends React.Component {
     constructor(props) {
         super(props);
@@ -10,7 +13,9 @@ class Menubar extends React.Component {
         };
     }
 
-    componentDidMount() { }
+    componentDidMount() {
+        console.log(pdfjs);
+    }
 
     async openSvg(ev) {
         this.pointerDown(ev);
@@ -72,6 +77,61 @@ class Menubar extends React.Component {
             };
         } catch (error) { }
         this.pointerDown(ev);
+    }
+
+    async importPdf(ev) {
+        this.pointerDown(ev);
+        const config = {
+            types: [
+                {
+                    description: "Pdf&Ai",
+                    accept: {
+                        "Pdf&Ai/*": [".pdf", ".ai"],
+                    },
+                },
+            ],
+            excludeAcceptAllOption: true,
+            multiple: false,
+        };
+        try {
+            const res = await window.showOpenFilePicker(config);
+            const f = await res[0].getFile();
+            const reader = new FileReader();
+            reader.readAsArrayBuffer(f);
+            reader.onload = async (res) => {
+                const CMAP_URL = "./cmaps/";
+                const loadingTask = pdfjs.getDocument({
+                    data: res.target.result,
+                    cMapUrl: CMAP_URL,
+                    cMapPacked: true,
+                    fontExtraProperties: true,
+                });
+                const pdfDocument = await loadingTask.promise;
+
+                const numPages = pdfDocument.numPages;
+                for (let i = 1; i <= numPages; i++) {
+                    const page = await pdfDocument.getPage(i);
+                    const opList = await page.getOperatorList();
+
+                    const svgGfx = new pdfjs.SVGGraphics(
+                        page.commonObjs,
+                        page.objs,
+                /* forceDataSchema = */ true
+                    );
+                    svgGfx.embedFonts = true;
+                    const svg = await svgGfx.getSVG(opList, page.getViewport({ scale: 1 }));
+
+                    let curNode = null;
+                    let node = document.createNodeIterator(svg, NodeFilter.SHOW_ELEMENT);
+                    for (; curNode = node.nextNode();) {
+                        if (curNode.localName !== 'svg') {
+                            console.log(curNode)
+                        }
+                    }
+                    page.cleanup();
+                }
+            };
+        } catch (error) { }
     }
 
     async importImage(ev) {
@@ -253,8 +313,12 @@ class Menubar extends React.Component {
                         >
                             Import Svg
                         </div>
-                        <div className="options-item disabled">Import Pdf</div>
-                        <div className="options-item disabled">Import AI(*.ai)</div>
+                        <div className="options-item disabled" onClick={(ev) => {
+                            this.importPdf(ev);
+                        }}>Import Pdf</div>
+                        <div className="options-item disabled" onClick={(ev) => {
+                            this.importPdf(ev);
+                        }}>Import AI(*.ai)</div>
                         <div
                             className="options-item"
                             onClick={(ev) => {
