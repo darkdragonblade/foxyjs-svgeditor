@@ -60,3 +60,8 @@
     min-height: 1px;
     border:none;
 }
+
+.menubar .disabled{
+    opacity: 0.4;
+    pointer-events: none;
+}
