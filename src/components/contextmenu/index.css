@@ -5,7 +5,7 @@
     background-color: #fcfcfc;
     box-shadow: 0 0 10px #cccccc;
     width: fit-content;
-    padding:0 6px;
+    padding:0 4px;
 }
 
 .contextmenu.active{
@@ -14,7 +14,7 @@
 
 .contextmenu .item{
     min-height: 28px;
-    padding:2px 10px ;
+    padding:2px 12px ;
     display: flex;
     align-items: center;
     font-size: 13px;

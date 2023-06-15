@@ -1,0 +1,13 @@
+.zoom{
+    position: fixed;
+    bottom:14px;
+    left:32px;
+    background-color: #fcfcfc;
+    color: #333333;
+    display: flex;
+    align-items: center;
+    padding:4px 8px;
+    box-shadow: 0 0 4px #cccccc;
+    border-radius: 2px;
+    font-size: 12px;
+}

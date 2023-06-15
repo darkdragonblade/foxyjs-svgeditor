@@ -7,13 +7,14 @@ class Contextmenu extends React.Component {
         this.state = {
             stage: void 0,
             active: false,
+            canCut: false,
+            canCopy: false,
             canGroup: false,
             canUnGroup: false,
             canRaise: false,
             canLower: false,
             x: 0,
             y: 0,
-            selectedEelementsLength: 0,
         }
     }
 
@@ -42,7 +43,8 @@ class Contextmenu extends React.Component {
                         active: true,
                         x: x - dx,
                         y: y - dy,
-                        selectedObjectElementsLength: stage.selectedObjectElements.size,
+                        canCut: stage.clipboardManager.canCut(),
+                        canCopy: stage.clipboardManager.canCopy(),
                         canGroup: stage.groupManager.canGroup(),
                         canUnGroup: stage.groupManager.canUnGroup(),
                         canRaise: stage.orderManager.canRaise(),
@@ -127,10 +129,10 @@ class Contextmenu extends React.Component {
     render() {
         return (
             <div style={{ 'left': this.state.x, 'top': this.state.y }} className={`contextmenu ${this.state.active && 'active'}`}>
-                <div className={`item ${this.state.selectedObjectElementsLength === 0 && 'disabled'}`} onClick={() => {
+                <div className={`item ${!this.state.canCut && 'disabled'}`} onClick={() => {
                     this.cut();
                 }}>cut</div>
-                <div className={`item ${this.state.selectedObjectElementsLength === 0 && 'disabled'}`} onClick={() => {
+                <div className={`item ${!this.state.canCopy && 'disabled'}`} onClick={() => {
                     this.copy();
                 }}>copy</div>
                 <div className="item" onClick={() => {
