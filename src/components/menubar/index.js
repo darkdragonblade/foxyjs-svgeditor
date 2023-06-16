@@ -50,7 +50,6 @@ class Menubar extends React.Component {
                 // const { width, height } = svg.viewBox.baseVal;
                 window.stage.currentWorkspace.innerHTML = svg.innerHTML;
                 window.stage.undoManager.clear();
-                window.stage.currentContainer = void 0;
             };
         } catch (error) { }
     }
@@ -142,7 +141,6 @@ class Menubar extends React.Component {
                     //     const cloneNode = item.cloneNode(true);
                     //     window.stage.addGraph(cloneNode);
                     // });
-                    window.stage.currentContainer = void 0;
                     window.stage.currentWorkspace.innerHTML = svg.innerHTML;
                     page.cleanup();
                 }
