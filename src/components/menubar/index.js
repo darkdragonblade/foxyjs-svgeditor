@@ -79,8 +79,11 @@ class Menubar extends React.Component {
                 const doc = domparser.parseFromString(res.target.result, "text/html");
                 const svg = doc.querySelector("svg");
                 // const { width, height } = svg.viewBox.baseVal;
-
-                window.stage.addGraph(svg);
+                svg.childNodes.forEach((item) => {
+                    if (item.nodeType === 3) return;
+                    const cloneNode = item.cloneNode(true);
+                    window.stage.addGraph(cloneNode);
+                });
             };
         } catch (error) { }
         this.pointerDown(ev);
@@ -127,21 +130,20 @@ class Menubar extends React.Component {
                     );
                     svgGfx.embedFonts = true;
                     const svg = await svgGfx.getSVG(opList, page.getViewport({ scale: 1 }));
+                    let curNode = null;
+                    let node = document.createNodeIterator(svg, NodeFilter.SHOW_ELEMENT);
+                    for (; curNode = node.nextNode();) {
+                        if (curNode.localName !== 'svg') {
+                            console.log(curNode)
+                            const cloneNode = curNode.cloneNode(true);
+                        }
+                    }
+                    svg.childNodes.forEach((item) => {
+                        if (item.nodeType === 3) return;
+                        const cloneNode = item.cloneNode(true);
+                        window.stage.addGraph(cloneNode);
+                    });
 
-                    // let curNode = null;
-                    // let node = document.createNodeIterator(svg, NodeFilter.SHOW_ELEMENT);
-                    // for (; curNode = node.nextNode();) {
-                    //     if (curNode.localName !== 'svg') {
-                    //         console.log(curNode)
-                    //         const cloneNode = curNode.cloneNode(true);
-                    //     }
-                    // }
-                    // svg.childNodes.forEach((item) => {
-                    //     if (item.nodeType === 3) return;
-                    //     const cloneNode = item.cloneNode(true);
-                    //     window.stage.addGraph(cloneNode);
-                    // });
-                    window.stage.currentWorkspace.innerHTML = svg.innerHTML;
                     page.cleanup();
                 }
             };
