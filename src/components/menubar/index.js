@@ -130,14 +130,14 @@ class Menubar extends React.Component {
                     );
                     svgGfx.embedFonts = true;
                     const svg = await svgGfx.getSVG(opList, page.getViewport({ scale: 1 }));
-                    let curNode = null;
-                    let node = document.createNodeIterator(svg, NodeFilter.SHOW_ELEMENT);
-                    for (; curNode = node.nextNode();) {
-                        if (curNode.localName !== 'svg') {
-                            console.log(curNode)
-                            const cloneNode = curNode.cloneNode(true);
-                        }
-                    }
+                    // let curNode = null;
+                    // let node = document.createNodeIterator(svg, NodeFilter.SHOW_ELEMENT);
+                    // for (; curNode = node.nextNode();) {
+                    //     if (curNode.localName !== 'svg') {
+                    //         console.log(curNode)
+                    //         const cloneNode = curNode.cloneNode(true);
+                    //     }
+                    // }
                     svg.childNodes.forEach((item) => {
                         if (item.nodeType === 3) return;
                         const cloneNode = item.cloneNode(true);
