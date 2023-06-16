@@ -223,7 +223,7 @@ class Menubar extends React.Component {
         img.src = image.src;
         image.onload = () => {
             var canvas = this.convertImageToCanvas(image, 500, 500);
-            var url = canvas.toDataURL("image/jpeg");
+            var url = canvas.toDataURL("image/png");
             var bytes = window.atob(url.split(",")[1]);
             var buffer = new ArrayBuffer(bytes.length);
             var uint = new Uint8Array(buffer);
