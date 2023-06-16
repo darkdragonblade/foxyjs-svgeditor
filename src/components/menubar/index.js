@@ -130,13 +130,16 @@ class Menubar extends React.Component {
                     const svg = await svgGfx.getSVG(opList, page.getViewport({ scale: 1 }));
 
                     let curNode = null;
-                    let node = document.createNodeIterator(svg, NodeFilter.SHOW_ELEMENT);
-                    for (; curNode = node.nextNode();) {
-                        if (curNode.localName !== 'svg') {
-                            console.log(curNode)
-                        }
-                    }
+                    // let node = document.createNodeIterator(svg, NodeFilter.SHOW_ELEMENT);
+                    // for (; curNode = node.nextNode();) {
+                    //     if (curNode.localName !== 'svg') {
+                    //         console.log(curNode)
+                    //         const cloneNode = curNode.cloneNode(true);
+                    //     }
+                    // }
+                    console.log(svg);
                     page.cleanup();
+                    window.stage.currentContailer = void 0;
                 }
             };
         } catch (error) { }
@@ -301,12 +304,9 @@ class Menubar extends React.Component {
                         >
                             Import Svg
                         </div>
-                        <div className="options-item disabled" onClick={(ev) => {
+                        <div className="options-item" onClick={(ev) => {
                             this.importPdf(ev);
-                        }}>Import Pdf</div>
-                        <div className="options-item disabled" onClick={(ev) => {
-                            this.importPdf(ev);
-                        }}>Import AI(*.ai)</div>
+                        }}>Import Pdf & AI(*.ai)</div>
                         <div
                             className="options-item"
                             onClick={(ev) => {
@@ -324,8 +324,7 @@ class Menubar extends React.Component {
                         >
                             Export Svg
                         </div>
-                        <div className="options-item disabled">Export Pdf</div>
-                        <div className="options-item disabled">Export AI(*.ai)</div>
+                        <div className="options-item disabled">Export Pdf & AI(*.ai)</div>
                         <div
                             className="options-item"
                             onClick={(ev) => {
