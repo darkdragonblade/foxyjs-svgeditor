@@ -43,7 +43,7 @@ class App extends React.Component {
         </div>
         {this.state.stage && <Contextmenu />}
         {this.state.stage && <Zoom />}
-        {this.state.stage && <Preview />}
+        {/* {this.state.stage && <Preview />} */}
       </div>
     );
   }
