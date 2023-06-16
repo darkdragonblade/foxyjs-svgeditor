@@ -23,6 +23,13 @@ class App extends React.Component {
     this.setState({
       stage,
     });
+
+    if (window.localStorage.foxyjs) {
+      stage.currentWorkspace.innerHTML = window.localStorage.foxyjs;
+    }
+    stage.board.addEventListener('workspacemutation', () => {
+      window.localStorage.foxyjs = stage.currentWorkspace.innerHTML;
+    });
   }
 
   render() {
