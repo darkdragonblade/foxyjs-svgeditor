@@ -49,6 +49,8 @@ class Menubar extends React.Component {
                 const svg = doc.querySelector("svg");
                 // const { width, height } = svg.viewBox.baseVal;
                 window.stage.currentWorkspace.innerHTML = svg.innerHTML;
+                window.stage.undoManager.clear();
+                window.stage.currentContailer = void 0;
             };
         } catch (error) { }
     }
