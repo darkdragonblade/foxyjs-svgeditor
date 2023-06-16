@@ -129,7 +129,7 @@ class Menubar extends React.Component {
                     svgGfx.embedFonts = true;
                     const svg = await svgGfx.getSVG(opList, page.getViewport({ scale: 1 }));
 
-                    let curNode = null;
+                    // let curNode = null;
                     // let node = document.createNodeIterator(svg, NodeFilter.SHOW_ELEMENT);
                     // for (; curNode = node.nextNode();) {
                     //     if (curNode.localName !== 'svg') {
@@ -137,7 +137,11 @@ class Menubar extends React.Component {
                     //         const cloneNode = curNode.cloneNode(true);
                     //     }
                     // }
-                    console.log(svg);
+                    svg.childNodes.forEach((item) => {
+                        if (item.nodeType === 3) return;
+                        const cloneNode = item.cloneNode(true);
+                        window.stage.addGraph(cloneNode);
+                    });
                     page.cleanup();
                     window.stage.currentContailer = void 0;
                 }
