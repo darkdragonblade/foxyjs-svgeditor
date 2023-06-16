@@ -14,7 +14,13 @@ class Menubar extends React.Component {
     }
 
     componentDidMount() {
-        console.log(pdfjs);
+        const stage = window.stage;
+        stage.board.addEventListener('undochange', () => {
+            this.setState({
+                canUndo: stage.undoManager.canUndo(),
+                canRedo: stage.undoManager.canRedo(),
+            });
+        });
     }
 
     async openSvg(ev) {
@@ -275,26 +281,6 @@ class Menubar extends React.Component {
         this.pointerDown(ev);
     }
 
-    cut(ev) {
-        window.stage.clipboardManager.redo();
-        this.pointerDown(ev);
-    }
-
-    copy(ev) {
-        window.stage.clipboardManager.copy();
-        this.pointerDown(ev);
-    }
-
-    paste(ev) {
-        window.stage.clipboardManager.paste();
-        this.pointerDown(ev);
-    }
-
-    delete(ev) {
-        window.stage.commands.delete();
-        this.pointerDown(ev);
-    }
-
     render() {
         return (
             <div className="menubar">
@@ -352,7 +338,7 @@ class Menubar extends React.Component {
                     <div className="title">Edit</div>
                     <div className="options">
                         <div
-                            className="options-item"
+                            className={`options-item ${!this.state.canUndo && 'disabled'}`}
                             onClick={(ev) => {
                                 this.undo(ev);
                             }}
@@ -360,47 +346,14 @@ class Menubar extends React.Component {
                             Undo
                         </div>
                         <div
-                            className="options-item"
+                            className={`options-item ${!this.state.canRedo && 'disabled'}`}
                             onClick={(ev) => {
                                 this.redo(ev);
                             }}
                         >
                             Redo
                         </div>
-                        <hr />
-                        <div
-                            className="options-item"
-                            onClick={(ev) => {
-                                this.cut(ev);
-                            }}
-                        >
-                            Cut
-                        </div>
-                        <div
-                            className="options-item"
-                            onClick={(ev) => {
-                                this.copy(ev);
-                            }}
-                        >
-                            Copy
-                        </div>
-                        <div
-                            className="options-item"
-                            onClick={(ev) => {
-                                this.paste(ev);
-                            }}
-                        >
-                            Paste
-                        </div>
-                        <hr />
-                        <div
-                            className="options-item"
-                            onClick={(ev) => {
-                                this.delete(ev);
-                            }}
-                        >
-                            Delete
-                        </div>
+
                     </div>
                 </div>
                 <div className="item">
