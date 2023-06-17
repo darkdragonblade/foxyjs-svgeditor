@@ -1,0 +1,29 @@
+.history {
+    /* flex: 1 1 0%; */
+    height: calc(100% - 78px);
+    width: 100%;
+    padding: 4px 0px;
+    overflow: auto;
+}
+
+.history-item {
+    border-bottom: 1px solid #d1d1d1;
+    padding: 3px 20px 3px 10px;
+    min-height: 28px;
+    display: flex;
+    align-items: center;
+}
+
+.history .icon{
+    display: flex;
+    align-items: center;
+}
+
+.history .label{
+    margin-left: 8px;
+}
+
+.history-item.active {
+    background-color: #448aff;
+    color: #ffffff;
+}

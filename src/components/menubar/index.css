@@ -37,7 +37,7 @@
     left:0;
     top:0;
     display: none;
-    flex-direction: column;
+    flex-flow: column;
     z-index: 888;
     top:100%;
     box-shadow: 0 8px 8px #cccccc;

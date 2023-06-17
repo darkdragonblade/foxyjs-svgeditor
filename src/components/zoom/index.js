@@ -15,11 +15,24 @@ class Zoom extends React.Component {
         });
     }
 
+    zoomIn() {
+        window.stage.zoomManager.zoomIn();
+    }
+
+    zoomOut() {
+        window.stage.zoomManager.zoomOut();
+    }
+
     render() {
         return (
             <div className="zoom">
-                <svg width="14" height="14" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M21 38C30.3888 38 38 30.3888 38 21C38 11.6112 30.3888 4 21 4C11.6112 4 4 11.6112 4 21C4 30.3888 11.6112 38 21 38Z" stroke="currentColor" strokeWidth="4" strokeLinejoin="round" /><path d="M21 15L21 27" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" /><path d="M15.0156 21.0156L27 21" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" /><path d="M33.2216 33.2217L41.7069 41.707" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                <div style={{ marginLeft: '6px' }}>{this.state.scale}%</div>
+                <svg onClick={() => {
+                    this.zoomOut();
+                }} style={{ cursor: 'pointer' }} width="16" height="16" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M10.5 24L38.5 24" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                <div style={{ margin: '0 6px' }}>{this.state.scale}%</div>
+                <svg onClick={() => {
+                    this.zoomIn();
+                }} style={{ cursor: 'pointer' }} width="16" height="16" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M24.0605 10L24.0239 38" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" /><path d="M10 24L38 24" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" /></svg>
             </div>
         );
     }

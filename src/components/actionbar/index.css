@@ -1,0 +1,37 @@
+.actionbar{
+    width:240px;
+    background-color: #fcfcfc;
+    border-left: 1px solid #d1d1d1;
+    display: flex;
+    flex-flow: column;
+}
+
+.actionbar .tab{
+    display: flex;
+    border-bottom: 1px solid #d1d1d1;
+    font-size: 13px;
+}
+
+.actionbar .tab .item{
+    width:33.3333%;
+    border-right: 1px solid #d1d1d1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding:10px 0;
+    cursor: pointer;
+    background-color: #ededed;
+    transition: all .34s;
+}
+
+.actionbar .tab .item:hover{
+    background-color: #ffffff;
+}
+
+.actionbar .tab .item:last-child{
+    border: 0;
+}
+
+.actionbar .tab .item.active{
+    background-color: #ffffff;
+}

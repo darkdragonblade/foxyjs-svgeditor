@@ -24,12 +24,12 @@ class App extends React.Component {
       stage,
     });
 
-    if (window.localStorage.foxyjs) {
-      stage.currentWorkspace.innerHTML = window.localStorage.foxyjs;
-    }
-    stage.board.addEventListener('workspacemutation', () => {
-      window.localStorage.foxyjs = stage.currentWorkspace.innerHTML;
-    });
+    // if (window.localStorage.foxyjs) {
+    //   stage.currentWorkspace.innerHTML = window.localStorage.foxyjs;
+    // }
+    // stage.board.addEventListener('workspacemutation', () => {
+    //   window.localStorage.foxyjs = stage.currentWorkspace.innerHTML;
+    // });
   }
 
   render() {

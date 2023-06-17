@@ -5,8 +5,8 @@
     left: 32px;
     top: 32px;
     display: flex;
-    flex-direction: column;
-    z-index: 1;
+    flex-flow: column;
+    z-index: 2;
 }
 
 .toolbar .item{

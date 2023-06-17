@@ -5,7 +5,7 @@
     background-color: #fcfcfc;
     box-shadow: 0 0 10px #cccccc;
     width: fit-content;
-    padding:0 4px;
+    padding: 4px;
 }
 
 .contextmenu.active{
