@@ -19,7 +19,7 @@ class Contextmenu extends React.Component {
 
     componentDidMount() {
         const stage = window.stage;
-        stage.board.addEventListener("contextmenu", (event) => {
+        window.addEventListener("contextmenu", (event) => {
             event.preventDefault();
         });
         stage.workspaces.addEventListener("pointerdown", (event) => {

@@ -1,17 +1,14 @@
 .toolbar {
     background-color: #fcfcfc;
-    box-shadow: 0 0 4px #cccccc;
-    position: absolute;
-    left: 32px;
-    top: 32px;
     display: flex;
     flex-flow: column;
     z-index: 2;
+    border-right: 1px solid #d1d1d1;
 }
 
 .toolbar .item{
-    width:32px;
-    height:32px;
+    width:38px;
+    height:38px;
     background-color: #fcfcfc;
     display: flex;
     justify-content: center;
