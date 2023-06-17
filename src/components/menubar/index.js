@@ -109,7 +109,7 @@ class Menubar extends React.Component {
             const reader = new FileReader();
             reader.readAsArrayBuffer(f);
             reader.onload = async (res) => {
-                const CMAP_URL = "./cmaps/";
+                const CMAP_URL = "https://unpkg.com/pdfjs-dist@3.7.107/cmaps/";
                 const loadingTask = pdfjs.getDocument({
                     data: res.target.result,
                     cMapUrl: CMAP_URL,
