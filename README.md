@@ -9,6 +9,7 @@ A **simple and powerful Javascript HTML5 SVG library**.
 
 - [online demo(editor)][onlineDemo]
 - [reactjs usege][reactjs]
+- [中文官网][website]
 
 ---
 
@@ -169,5 +170,6 @@ onMounted(() => {
 ---
 
 [mdn_es6]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Modules
-[onlineDemo]: https://darkdragonblade.github.io/foxyjs-svgeditor/demo/index.html
+[onlineDemo]: https://darkdragonblade.github.io/foxyjs-svgeditor/demo
 [reactjs]: https://github.com/darkdragonblade/foxyjs-svgeditor/tree/main/src
+[website]: https://darkdragonblade.github.io/foxyjs-svgeditor/web
