@@ -1,3 +1,4 @@
-a{
-    color: blue;
+/* 左上角标题 */
+.home .hero .action-button {
+    color: #448aff!important;
 }
