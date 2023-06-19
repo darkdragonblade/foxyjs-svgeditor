@@ -1,12 +1,14 @@
 import React from "react";
 import './index.css';
 import History from "./history";
+import Attribute from "./attribute";
+
 class Actionbar extends React.Component {
 
     constructor(props) {
         super(props);
         this.state = {
-            type: 3
+            type: 1
         }
     }
 
@@ -27,13 +29,14 @@ class Actionbar extends React.Component {
                     <div onClick={() => {
                         this.changeType(1);
                     }} className={`item ${this.state.type === 1 && 'active'}`}>Attribute</div>
-                    <div onClick={() => {
+                    {/* <div onClick={() => {
                         this.changeType(2);
-                    }} className={`item ${this.state.type === 2 && 'active'}`}>Layer</div>
+                    }} className={`item ${this.state.type === 2 && 'active'}`}>Layer</div> */}
                     <div onClick={() => {
                         this.changeType(3);
                     }} className={`item ${this.state.type === 3 && 'active'}`}>History</div>
                 </div>
+                {this.state.type === 1 && <Attribute />}
                 {this.state.type === 3 && <History />}
             </div>
         );

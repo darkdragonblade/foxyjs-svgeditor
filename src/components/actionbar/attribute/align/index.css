@@ -1,0 +1,37 @@
+.align h3{
+    padding:18px 14px;
+}
+
+.align .items{
+    display: flex;
+    border-radius: 4px;
+    margin:0 18px;
+    box-shadow: 0 0 4px #cccccc;
+    margin-bottom: 12px;
+}
+
+.align .items:last-child{
+    margin-bottom: 0;
+}
+
+.align .items .item{
+    flex:1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding:8px 0;
+    border-right: 1px solid #d1d1d1;
+    cursor: pointer;
+}
+
+.align .items .item:hover{
+    background-color: #ededed;
+}
+
+.align .items .item:active{
+    background-color: #d3d3d3;
+}
+
+.align .items .item:last-child{
+    border-right: 0;
+}

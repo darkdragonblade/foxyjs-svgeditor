@@ -3,12 +3,12 @@
 ![](https://img.shields.io/badge/svg-editor-blue)
 ![](https://img.shields.io/badge/svg-foxyjs-red)
 
-![](https://darkdragonblade.github.io/foxyjs-svgeditor/static/gif.gif)
+![](https://darkdragonblade.github.io/foxyjs-svgeditor/static/demo.png)
 
 A **simple and powerful Javascript HTML5 SVG library**.
 
-- [online demo(editor)][onlineDemo]
-- [reactjs usege][reactjs]
+- [online demo][onlineDemo]
+- [reactjs usage][reactjs]
 - [中文官网][website]
 
 ---
