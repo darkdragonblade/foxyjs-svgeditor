@@ -12,6 +12,7 @@ class Color extends React.Component {
             stroke: "#000000",
             strokeWidth: 0,
             type: 1,
+            selectedObjectElementsLength: 0,
         };
     }
 
@@ -21,16 +22,12 @@ class Color extends React.Component {
             this.setState({
                 fill: color,
             });
-            stage.setStyle({
-                fill: color,
-            });
+            stage.styleManager.setStyle('fill', color);
         } else {
             this.setState({
                 stroke: color,
             });
-            stage.setStyle({
-                stroke: color,
-            });
+            stage.styleManager.setStyle('stroke', color);
         }
     }
 
@@ -39,9 +36,7 @@ class Color extends React.Component {
         this.setState({
             strokeWidth
         });
-        stage.setStyle({
-            strokeWidth,
-        });
+        stage.styleManager.setStyle('stroke-width', strokeWidth);
     }
 
     typeChange(type) {
@@ -52,13 +47,12 @@ class Color extends React.Component {
     }
 
     colorRgbToHex(orig) {
-        var a;
-        var isPercent;
-        var rgb = orig
+        let a;
+        const rgb = orig
             .replace(/\s/g, "")
             .match(/^rgba?\((\d+),(\d+),(\d+),?([^,\s)]+)?/i);
-        var alpha = ((rgb && rgb[4]) || "").trim();
-        var hex = rgb
+        const alpha = ((rgb && rgb[4]) || "").trim();
+        let hex = rgb
             ? (rgb[1] | (1 << 8)).toString(16).slice(1) +
             (rgb[2] | (1 << 8)).toString(16).slice(1) +
             (rgb[3] | (1 << 8)).toString(16).slice(1)
@@ -106,6 +100,9 @@ class Color extends React.Component {
         stage.board.addEventListener(
             "selectedelementschange",
             (ev = () => {
+                this.setState({
+                    selectedObjectElementsLength: stage.selectedObjectElements.size
+                })
                 this.getStyle(this.state.type);
             })
         );
@@ -131,7 +128,7 @@ class Color extends React.Component {
 
                 <div className="item">
                     <HexColorPicker
-                        className="picker"
+                        className={`picker ${this.state.selectedObjectElementsLength === 0 && 'disabled'}`}
                         color={this.state.color}
                         onChange={(ev) => {
                             this.colorChange(ev);
@@ -140,7 +137,7 @@ class Color extends React.Component {
                 </div>
                 <h3>Stroke Width</h3>
                 <div className="item">
-                    <Slider className="slider" value={this.state.strokeWidth} onChange={(ev) => {
+                    <Slider className={`slider ${this.state.selectedObjectElementsLength === 0 && 'disabled'}`} value={this.state.strokeWidth} onChange={(ev) => {
                         this.sliderChange(ev)
                     }} />
                 </div>
