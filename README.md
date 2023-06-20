@@ -2,7 +2,6 @@
 
 ![](https://img.shields.io/badge/svg-editor-blue)
 ![](https://img.shields.io/badge/svg-foxyjs-red)
-
 ![](https://darkdragonblade.github.io/foxyjs-svgeditor/static/demo.png)
 
 A **simple and powerful Javascript HTML5 SVG library**.
@@ -172,4 +171,4 @@ onMounted(() => {
 [mdn_es6]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Modules
 [onlineDemo]: https://darkdragonblade.github.io/foxyjs-svgeditor/demo
 [reactjs]: https://github.com/darkdragonblade/foxyjs-svgeditor/tree/main/src
-[website]: https://darkdragonblade.github.io/foxyjs-svgeditor/web
+[website]: https://darkdragonblade.github.io/foxyjs-website
