@@ -13,15 +13,21 @@ class Align extends React.Component {
 
     align = (type) => {
         const stage = window.stage;
-        stage.arrangementManager.align(type);
+        stage.alignManager.align(type);
+    }
+
+    init() {
+        const stage = window.stage;
+        this.setState({
+            canAlign: stage.selectedElements.size > 0x0,
+        });
     }
 
     componentDidMount() {
+        this.init();
         const stage = window.stage;
         stage.board.addEventListener('selectedelementschange', ev = () => {
-            this.setState({
-                canAlign: stage.selectedElements.size > 0x0,
-            });
+            this.init();
         });
     }
 
@@ -33,7 +39,7 @@ class Align extends React.Component {
     render() {
         return (
             <div className="align">
-                <h3>Alignment</h3>
+                <h5>Alignment</h5>
                 <div className="items">
                     <div className={`item ${!this.state.canAlign && 'disabled'}`} onClick={() => {
                         this.align('move-top-inside');

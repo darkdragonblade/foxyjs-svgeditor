@@ -10,15 +10,21 @@ class Transform extends React.Component {
         };
     }
 
+    init() {
+        const stage = window.stage;
+        this.setState({
+            canFlip: stage.transformManager.canFlip(),
+            canRotate: stage.transformManager.canRotate(),
+        });
+    }
+
     componentDidMount() {
+        this.init();
         const stage = window.stage;
         stage.board.addEventListener(
             "selectedelementschange",
             (ev = () => {
-                this.setState({
-                    canFlip: stage.transformManager.canFlip(),
-                    canRotate: stage.transformManager.canRotate(),
-                });
+                this.init();
             })
         );
     }
@@ -47,7 +53,7 @@ class Transform extends React.Component {
     render() {
         return (
             <div className="transform">
-                <h3>Transform</h3>
+                <h5>Transform</h5>
                 <div className="items">
                     <div
                         className={`item ${!this.state.canFlip && "disabled"}`}

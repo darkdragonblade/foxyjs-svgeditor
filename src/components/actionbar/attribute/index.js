@@ -3,7 +3,6 @@ import './index.css';
 import Align from "./align";
 import Transform from "./transform";
 import Color from "./color";
-import Font from "./font";
 class Attribute extends React.Component {
 
     constructor(props) {
@@ -17,15 +16,12 @@ class Attribute extends React.Component {
 
     }
 
-
-
     render() {
         return (
             <div className="attribute">
                 <Align />
                 <Transform />
                 <Color />
-                <Font />
             </div>
         );
     }

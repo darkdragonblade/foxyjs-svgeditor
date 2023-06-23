@@ -187,6 +187,7 @@ class Menubar extends React.Component {
         this.pointerDown(ev);
         const stage = window.stage;
         const opts = {
+            suggestedName: 'foxyjs.svg',
             types: [
                 {
                     description: "Svg file",
@@ -239,8 +240,7 @@ class Menubar extends React.Component {
                 uint[i] = bytes.charCodeAt(i);
             }
             var imageFile = new Blob([buffer]);
-            const name = new Date().getTime() + ".png";
-            this.saveImage(imageFile, name);
+            this.saveImage(imageFile, 'foxyjs.png');
         };
     }
 

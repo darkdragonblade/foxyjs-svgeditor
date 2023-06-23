@@ -95,15 +95,21 @@ class Color extends React.Component {
         }
     }
 
+    init() {
+        const stage = window.stage;
+        this.setState({
+            selectedObjectElementsLength: stage.selectedObjectElements.size
+        })
+        this.getStyle(this.state.type);
+    }
+
     componentDidMount() {
+        this.init();
         const stage = window.stage;
         stage.board.addEventListener(
             "selectedelementschange",
             (ev = () => {
-                this.setState({
-                    selectedObjectElementsLength: stage.selectedObjectElements.size
-                })
-                this.getStyle(this.state.type);
+                this.init();
             })
         );
     }
@@ -116,7 +122,7 @@ class Color extends React.Component {
     render() {
         return (
             <div className="color">
-                <h3>Color</h3>
+                <h5>Color</h5>
                 <div className="tabs">
                     <div className={`tab-item ${this.state.type === 1 && 'active'}`} onClick={() => {
                         this.typeChange(1);
@@ -135,7 +141,7 @@ class Color extends React.Component {
                         }}
                     />
                 </div>
-                <h3>Stroke Width</h3>
+                <h5>Stroke Width</h5>
                 <div className="item">
                     <Slider className={`slider ${this.state.selectedObjectElementsLength === 0 && 'disabled'}`} value={this.state.strokeWidth} onChange={(ev) => {
                         this.sliderChange(ev)

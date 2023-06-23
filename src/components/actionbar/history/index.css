@@ -1,10 +1,9 @@
 .history {
-    /* flex: 1 1 0%; */
-    height: calc(100% - 78px);
-    width: 100%;
-    padding: 4px 0px;
-    overflow: auto;
+    height:calc(100% - 78px);
+    overflow-y: auto;
+    position: relative;
 }
+
 
 .history-item {
     border-bottom: 1px solid #d1d1d1;
@@ -26,4 +25,30 @@
 .history-item.active {
     background-color: #448aff;
     color: #ffffff;
+}
+
+.operate{
+    display: flex;
+    background-color: #ffffff;
+    box-shadow: 0 0 4px #cccccc;
+    border-radius: 4px;
+    margin:12px;
+}
+
+.operate div{
+    padding:8px 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex:1;
+    border-right: 1px solid #d1d1d1;
+    cursor: pointer;
+}
+
+.operate div:hover{
+    background-color: #efefef;
+}
+
+.operate div:last-child{
+    border:0;
 }
