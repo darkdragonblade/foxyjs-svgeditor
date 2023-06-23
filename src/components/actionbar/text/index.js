@@ -96,54 +96,7 @@ class Font extends React.Component {
 
     queryTextInfo = async () => {
         const stage = window.stage;
-        const {
-            fontFamily,
-            disFontFamily,
-            fontSize,
-            disFontSize,
-            isBold,
-            disBold,
-            isItalic,
-            disItalic,
-            isUnderline,
-            disUnderline,
-            isLineThrough,
-            disLineThrough,
-            isOverline,
-            disOverline,
-            anchor,
-            disAnchor,
-            letterSpacing,
-            disLetterSpacing,
-            wordSpacing,
-            disWordSpacing,
-            lineSpacing,
-            disLineSpacing,
-        } = await stage.textManager.queryTextInfo();
-        this.setState({
-            fontFamily,
-            disFontFamily,
-            fontSize,
-            disFontSize,
-            isBold,
-            disBold,
-            isItalic,
-            disItalic,
-            isUnderline,
-            disUnderline,
-            isLineThrough,
-            disLineThrough,
-            isOverline,
-            disOverline,
-            anchor,
-            disAnchor,
-            letterSpacing,
-            disLetterSpacing,
-            wordSpacing,
-            disWordSpacing,
-            lineSpacing,
-            disLineSpacing,
-        });
+        this.setState(await stage.textManager.queryTextInfo());
     }
 
     fontFamily = (f) => {
@@ -209,17 +162,17 @@ class Font extends React.Component {
     render() {
         return (
             <div className="font">
-                {/* <h5>Family</h5>
+                <h5>Family</h5>
                 <div className="items">
                     <Select
                         className={`select ${this.state.isSelectedText && "disabled"}`}
-                        // value={this.state.fontFamily}
+                        defaultInputValue={this.state.fontFamily}
                         options={this.state.options}
                         onChange={(ev) => {
                             this.fontFamily(ev);
                         }}
                     />
-                </div> */}
+                </div>
                 <h5>Face</h5>
                 <div className="items">
                     <div className={`item ${this.state.disBold && "disabled"} ${this.state.isBold && 'active'}`} onClick={() => {
