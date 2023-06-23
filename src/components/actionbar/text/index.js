@@ -13,15 +13,15 @@ class Font extends React.Component {
             disFontFamily: true,
             fontSize: 13,
             disFontSize: true,
-            isBold: true,
+            isBold: false,
             disBold: true,
-            isItalic: true,
+            isItalic: false,
             disItalic: true,
-            isUnderline: true,
+            isUnderline: false,
             disUnderline: true,
-            isLineThrough: true,
+            isLineThrough: false,
             disLineThrough: true,
-            isOverline: true,
+            isOverline: false,
             disOverline: true,
             anchor: '',
             disAnchor: true,
@@ -96,10 +96,57 @@ class Font extends React.Component {
 
     queryTextInfo = async () => {
         const stage = window.stage;
-        this.setState(await stage.textManager.queryTextInfo());
+        const {
+            fontFamily,
+            disFontFamily,
+            fontSize,
+            disFontSize,
+            isBold,
+            disBold,
+            isItalic,
+            disItalic,
+            isUnderline,
+            disUnderline,
+            isLineThrough,
+            disLineThrough,
+            isOverline,
+            disOverline,
+            anchor,
+            disAnchor,
+            letterSpacing,
+            disLetterSpacing,
+            wordSpacing,
+            disWordSpacing,
+            lineSpacing,
+            disLineSpacing,
+        } = await stage.textManager.queryTextInfo();
+        this.setState({
+            fontFamily,
+            disFontFamily,
+            fontSize,
+            disFontSize,
+            isBold,
+            disBold,
+            isItalic,
+            disItalic,
+            isUnderline,
+            disUnderline,
+            isLineThrough,
+            disLineThrough,
+            isOverline,
+            disOverline,
+            anchor,
+            disAnchor,
+            letterSpacing,
+            disLetterSpacing,
+            wordSpacing,
+            disWordSpacing,
+            lineSpacing,
+            disLineSpacing,
+        });
     }
 
-    fontFamily(f) {
+    fontFamily = (f) => {
         const stage = window.stage;
         Array.from(stage.selectedObjectElements.keys()).forEach((node) => {
             if (node.localName === "text") {
@@ -135,14 +182,16 @@ class Font extends React.Component {
                 f.label = f.family;
             }
         });
+
+        console.log(options);
         this.setState({
             options,
         });
     }
 
     async componentDidMount() {
-        this.queryLocalFonts();
         this.queryTextInfo();
+        this.queryLocalFonts();
         const stage = window.stage;
         stage.board.addEventListener(
             "selectedelementschange",
@@ -163,8 +212,8 @@ class Font extends React.Component {
                 {/* <h5>Family</h5>
                 <div className="items">
                     <Select
-                        className={`select ${!this.state.isSelectedText && "disabled"}`}
-                        value={this.state.fontFamily}
+                        className={`select ${this.state.isSelectedText && "disabled"}`}
+                        // value={this.state.fontFamily}
                         options={this.state.options}
                         onChange={(ev) => {
                             this.fontFamily(ev);
