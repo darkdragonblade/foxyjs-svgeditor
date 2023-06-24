@@ -37,66 +37,66 @@ class Font extends React.Component {
     bold = () => {
         const stage = window.stage;
         stage.textManager.bold();
-        this.queryTextInfo();
+        this.info();
     }
 
     italic = () => {
         const stage = window.stage;
         stage.textManager.italic();
-        this.queryTextInfo();
+        this.info();
     }
 
     underline = () => {
         const stage = window.stage;
         stage.textManager.underline();
-        this.queryTextInfo();
+        this.info();
     }
 
     lineThrough = () => {
         const stage = window.stage;
         stage.textManager.lineThrough();
-        this.queryTextInfo();
+        this.info();
     }
 
     overline = () => {
         const stage = window.stage;
         stage.textManager.overline();
-        this.queryTextInfo();
+        this.info();
     }
 
     anchor = (anchor) => {
         const stage = window.stage;
         stage.textManager.anchor(anchor);
-        this.queryTextInfo();
+        this.info();
     }
 
     letterSpacing = (value) => {
         const stage = window.stage;
         stage.textManager.letterSpacing(value);
-        this.queryTextInfo();
+        this.info();
     }
 
     wordSpacing = (value) => {
         const stage = window.stage;
         stage.textManager.wordSpacing(value);
-        this.queryTextInfo();
+        this.info();
     }
 
     lineSpacing = (value) => {
         const stage = window.stage;
         stage.textManager.lineSpacing(value);
-        this.queryTextInfo();
+        this.info();
     }
 
     fontSize = (value) => {
         const stage = window.stage;
         stage.textManager.fontSize(value);
-        this.queryTextInfo();
+        this.info();
     }
 
-    queryTextInfo = async () => {
+    info = async () => {
         const stage = window.stage;
-        this.setState(await stage.textManager.queryTextInfo());
+        this.setState(await stage.textManager.info());
     }
 
     fontFamily = (f) => {
@@ -136,20 +136,19 @@ class Font extends React.Component {
             }
         });
 
-        console.log(options);
         this.setState({
             options,
         });
     }
 
     async componentDidMount() {
-        this.queryTextInfo();
+        this.info();
         this.queryLocalFonts();
         const stage = window.stage;
         stage.board.addEventListener(
             "selectedelementschange",
             (ev = () => {
-                this.queryTextInfo();
+                this.info();
             })
         );
     }
@@ -165,7 +164,7 @@ class Font extends React.Component {
                 <h5>Family</h5>
                 <div className="items">
                     <Select
-                        className={`select ${this.state.isSelectedText && "disabled"}`}
+                        className={`select ${this.state.disFontFamily && "disabled"}`}
                         defaultInputValue={this.state.fontFamily}
                         options={this.state.options}
                         onChange={(ev) => {
@@ -240,8 +239,8 @@ class Font extends React.Component {
                 <h5>Letter</h5>
                 <div className="slider-wrapper">
                     <Slider
-                        min={-10}
-                        max={10}
+                        min={-50}
+                        max={50}
                         value={this.state.letterSpacing}
                         onChange={(ev) => {
                             this.letterSpacing(ev);
@@ -252,8 +251,8 @@ class Font extends React.Component {
                 <h5>Word</h5>
                 <div className="slider-wrapper">
                     <Slider
-                        min={-100}
-                        max={100}
+                        min={-50}
+                        max={50}
                         value={this.state.wordSpacing}
                         onChange={(ev) => {
                             this.wordSpacing(ev);
