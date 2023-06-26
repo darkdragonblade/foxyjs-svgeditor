@@ -96,7 +96,7 @@ class History extends React.Component {
                             <path d="M 51.294 67.074 C 38.367 67.074 26.658 62.243 17.633 54.39 L 0.07 71.953 L 0.07 28.046 L 43.976 28.046 L 26.268 45.707 C 47.331 63.63 79.849 54.375 88.321 28.046 L 99.93 31.852 C 93.009 52.852 73.405 67.05 51.294 67.074 Z" transform="matrix(-1, 0, 0, -1, 100.000001, 99.999004)"></path>
                         </svg>
                     </div>
-                    <div className="clear" onClick={() => {
+                    <div className={`clear ${this.state.groups.length === 0 && 'disabled'} `} onClick={() => {
                         this.clear();
                     }}>
                         <svg preserveAspectRatio="none" viewBox="0 0 100 100" width="16" height="16">

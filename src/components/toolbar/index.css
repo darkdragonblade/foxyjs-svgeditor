@@ -20,10 +20,6 @@
     position: relative;
 }
 
-.toolbar .item:last-child{
-    border-bottom: 0;
-}
-
 .toolbar .item:hover{
     background-color: #efefef;
 }

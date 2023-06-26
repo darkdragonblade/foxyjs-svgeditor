@@ -22,12 +22,12 @@ class Color extends React.Component {
             this.setState({
                 fill: color,
             });
-            stage.styleManager.setStyle('fill', color);
+            stage.styleManager.set('fill', color);
         } else {
             this.setState({
                 stroke: color,
             });
-            stage.styleManager.setStyle('stroke', color);
+            stage.styleManager.set('stroke', color);
         }
     }
 
@@ -36,7 +36,7 @@ class Color extends React.Component {
         this.setState({
             strokeWidth
         });
-        stage.styleManager.setStyle('stroke-width', strokeWidth);
+        stage.styleManager.set('stroke-width', strokeWidth);
     }
 
     typeChange(type) {

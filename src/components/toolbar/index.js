@@ -3,7 +3,7 @@ import "./index.css";
 
 const icons = [
     [
-        "M 8.5 4.095 C 12.004 -5.959 25.735 4.095 8.5 17.021 C -8.736 4.095 4.995 -5.959 8.5 4.095 Z",
+        "M 8.5 15.692 L 8.132 15.446 C 6.384 14.279 4.172 12.959 2.534 11.02 C 0.808 8.977 -0.021 6.879 0.001 4.604 C 0.026 2.065 2.063 0 4.54 0 C 6.506 0 7.813 1.144 8.5 1.97 C 9.188 1.144 10.495 0 12.461 0 C 14.938 0 16.974 2.065 17 4.603 C 17.023 6.879 16.194 8.976 14.466 11.019 C 12.828 12.959 10.616 14.279 8.868 15.446 L 8.5 15.692 Z",
 
         "M 0 8.5 C 0 3.806 3.806 0 8.5 0 C 10.754 0 12.916 0.896 14.51 2.49 C 16.104 4.084 17 6.246 17 8.5 C 17 13.194 13.194 17 8.5 17 C 3.806 17 0 13.194 0 8.5 Z M 4.25 8.5 C 4.25 10.847 6.153 12.75 8.5 12.75 C 10.847 12.75 12.75 10.847 12.75 8.5 C 12.75 6.153 10.847 4.25 8.5 4.25 C 6.153 4.25 4.25 6.153 4.25 8.5 Z",
 
@@ -161,18 +161,13 @@ class Toolbar extends React.Component {
                     }}
                 >
                     <svg
-                        width="18"
-                        height="18"
-                        viewBox="0 0 48 48"
+                        width="17"
+                        height="17"
+                        viewBox="0 0 17 17"
                         fill="none"
                         xmlns="http://www.w3.org/2000/svg"
                     >
-                        <path
-                            d="M8 6L43 25L24 27L13.9948 44L8 6Z"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                            strokeLinejoin="round"
-                        />
+                        <path fill="currentColor" d="M 0 0 L 17 7.893 L 7.893 7.893 L 7.893 17 L 0 0 Z"></path>
                     </svg>
                 </div>
                 <div
@@ -183,18 +178,16 @@ class Toolbar extends React.Component {
                     }}
                 >
                     <svg
-                        width="18"
-                        height="18"
-                        viewBox="0 0 48 48"
+                        width="12.7"
+                        height="17"
+                        viewBox="0 0 12.7 17"
                         fill="none"
                         xmlns="http://www.w3.org/2000/svg"
                     >
                         <path
-                            d="M14.2227 37.471L6.54955 26.9844C5.13168 25.0466 5.51902 22.3315 7.42219 20.8675C9.18287 19.5132 11.675 19.675 13.2457 21.2457L16 24V7.25C16 5.45507 17.4551 4 19.25 4C21.0449 4 22.5 5.45508 22.5 7.25V6.25C22.5 4.45507 23.9551 3 25.75 3C27.5449 3 29 4.45508 29 6.25V7.25C29 5.45507 30.4551 4 32.25 4C34.0449 4 35.5 5.45508 35.5 7.25V11.25C35.5 9.45507 36.9551 8 38.75 8C40.5449 8 42 9.45507 42 11.25V30.3077C42 33.0387 41.1618 35.7251 39.6196 37.979C37.0557 41.7263 32.7851 44 28.2446 44H27.0901C22.0053 44 17.2254 41.5747 14.2227 37.471Z"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
+                            fill="currentColor"
+                            d="M 0.612 6.942 C 1.112 6.722 1.687 6.985 1.89 7.527 L 3.055 10.36 L 3.429 10.36 L 3.429 2.656 C 3.429 2.072 3.871 1.594 4.41 1.594 C 4.95 1.594 5.392 2.072 5.392 2.656 L 5.392 7.695 L 5.882 7.703 L 5.882 1.063 C 5.882 0.478 6.324 0 6.863 0 C 7.405 0 7.844 0.478 7.844 1.063 L 7.844 7.695 L 8.334 7.703 L 8.334 2.125 C 8.334 1.54 8.776 1.063 9.316 1.063 C 9.855 1.063 10.297 1.54 10.297 2.125 L 10.297 8.226 L 10.787 8.234 L 10.787 4.25 C 10.787 3.666 11.229 3.187 11.768 3.187 C 12.309 3.187 12.75 3.666 12.75 4.25 L 12.75 11.422 C 12.75 13.939 11.518 17 7.139 17 C 5.784 17 4.502 16.768 3.796 16.303 C 3.355 16.011 2.974 15.635 2.677 15.196 C 2.456 14.869 2.277 14.515 2.146 14.141 L 0.072 8.326 C -0.131 7.785 0.112 7.162 0.612 6.942 Z"
+
                         />
                     </svg>
                 </div>
@@ -317,43 +310,13 @@ class Toolbar extends React.Component {
                     }}
                 >
                     <svg
-                        width="18"
-                        height="18"
-                        viewBox="0 0 48 48"
+                        width="17"
+                        height="17"
+                        viewBox="0 0 17 17"
                         fill="none"
                         xmlns="http://www.w3.org/2000/svg"
                     >
-                        <rect
-                            x="6"
-                            y="6"
-                            width="36"
-                            height="36"
-                            rx="3"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                            strokeLinejoin="round"
-                        />
-                        <path
-                            d="M16 19V16H32V19"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                        />
-                        <path
-                            d="M22 34H26"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                        />
-                        <path
-                            d="M24 18L24 34"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                        />
+                        <path fill="currentColor" d="M 16.604 15.556 C 16.604 15.556 17 15.556 17 15.556 C 17 15.556 17 17 17 17 C 17 17 11.018 17 11.018 17 C 11.018 17 11.018 15.556 11.018 15.556 C 11.018 15.556 11.537 15.556 11.537 15.556 C 11.959 15.556 12.256 15.131 12.119 14.723 C 12.119 14.723 11.368 12.484 11.368 12.484 C 11.368 12.484 5.631 12.484 5.631 12.484 C 5.631 12.484 4.881 14.723 4.881 14.723 C 4.744 15.131 5.041 15.556 5.463 15.556 C 5.463 15.556 5.982 15.556 5.982 15.556 C 5.982 15.556 5.982 17 5.982 17 C 5.982 17 0 17 0 17 C 0 17 0 15.556 0 15.556 C 0 15.556 0.396 15.556 0.396 15.556 C 0.943 15.556 1.43 15.204 1.611 14.678 C 1.611 14.678 7.276 0 7.276 0 C 7.276 0 9.922 0 9.922 0 C 9.922 0 15.389 14.678 15.389 14.678 C 15.57 15.204 16.057 15.556 16.604 15.556 Z M 6.549 10.319 C 6.549 10.319 10.451 10.319 10.451 10.319 C 10.451 10.319 8.5 3.618 8.5 3.618 C 8.5 3.618 6.549 10.319 6.549 10.319 Z"></path>
                     </svg>
                 </div>
                 <div
@@ -364,54 +327,13 @@ class Toolbar extends React.Component {
                     }}
                 >
                     <svg
-                        width="18"
-                        height="18"
-                        viewBox="0 0 48 48"
+                        width="17"
+                        height="17"
+                        viewBox="0 0 17 17"
                         fill="none"
                         xmlns="http://www.w3.org/2000/svg"
                     >
-                        <g clipPath="url(#icon-def928152696ccc)">
-                            <path
-                                d="M30.9995 8.99902L38.9995 16.999"
-                                stroke="currentColor"
-                                strokeWidth="4"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                            />
-                            <path
-                                d="M7.99953 31.999L35.9994 4L43.9995 11.999L15.9995 39.999L5.99951 41.999L7.99953 31.999Z"
-                                stroke="currentColor"
-                                strokeWidth="4"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                            />
-                            <path
-                                d="M30.9995 8.99902L38.9995 16.999"
-                                stroke="currentColor"
-                                strokeWidth="4"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                            />
-                            <path
-                                d="M8.99951 31.999L15.9995 38.999"
-                                stroke="currentColor"
-                                strokeWidth="4"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                            />
-                            <path
-                                d="M12.9995 34.999L34.9995 12.999"
-                                stroke="currentColor"
-                                strokeWidth="4"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                            />
-                        </g>
-                        <defs>
-                            <clipPath id="icon-def928152696ccc">
-                                <rect width="48" height="48" fill="currentColor" />
-                            </clipPath>
-                        </defs>
+                        <path fill="currentColor" d="M 2.248 17 L 0 17 L 0 14.752 L 12.674 2.047 L 14.953 4.326 L 2.248 17 Z M 15.436 3.841 L 13.159 1.564 L 14.452 0.311 C 14.652 0.11 14.959 0 15.243 0 C 15.525 -0.001 15.796 0.111 15.996 0.311 L 16.69 1.006 C 16.889 1.205 17.001 1.475 17 1.757 C 17 2.043 16.889 2.348 16.689 2.548 L 15.436 3.841 Z M 15.128 0.947 Z"></path>
                     </svg>
                 </div>
                 <div
@@ -421,109 +343,56 @@ class Toolbar extends React.Component {
                         this.toggleTool("pen-tool");
                     }}
                 >
-                    <svg
-                        width="18"
-                        height="18"
-                        viewBox="0 0 48 48"
-                        fill="none"
-                        xmlns="http://www.w3.org/2000/svg"
-                    >
-                        <path
-                            d="M40 35C40 25.7953 32.8366 10 24 10C15.1634 10 8 25.7953 8 35"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                        />
-                        <rect
-                            x="4"
-                            y="35"
-                            width="8"
-                            height="8"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                            strokeLinejoin="round"
-                        />
-                        <rect
-                            x="4"
-                            y="6"
-                            width="8"
-                            height="8"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                            strokeLinejoin="round"
-                        />
-                        <rect
-                            x="36"
-                            y="35"
-                            width="8"
-                            height="8"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                            strokeLinejoin="round"
-                        />
-                        <rect
-                            x="36"
-                            y="6"
-                            width="8"
-                            height="8"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                            strokeLinejoin="round"
-                        />
-                        <path
-                            d="M12 10H36"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                        />
+                    <svg viewBox="0 0 100 100" width="17" height="17">
+                        <path fill="currentColor" d="M 0.04 93.854 C -0.985 89.1 27.822 66.098 48.944 66.038 C 69.113 65.982 100.985 88.186 100.229 93.854 L 100.229 93.854 C 100.229 97.581 96.602 100.604 92.128 100.604 C 91.808 99.199 65.137 76.997 48.513 78.73 C 31.537 80.501 7.045 100.057 8.141 100.604 C 3.667 100.604 0.04 97.581 0.04 93.854 L 0.04 93.854 Z" style={{ "strokeWidth": 0.871 }}></path>
+                        <rect fill="currentColor" x="13.256" y="51.466" width="63.139" height="6.501" transform="matrix(0.204583, -0.978849, 0.97885, 0.204582, -51.53737, 93.196868)" style={{ "strokeWidth": 1.023, opacity: 0.35 }} ></rect>
+                        <rect fill="currentColor" x="13.013" y="51.466" width="61.984" height="6.501" transform="matrix(-0.20865, -0.97799, -0.97799, 0.208649, 151.639513, 92.620224)" style={{ "strokeWidth": 1.004, opacity: 0.35 }}></rect>
+                        <path fill="currentColor" d="M 67.684 31.712 C 60.691 24.719 60.691 13.382 67.684 6.388 C 74.677 -0.604 86.014 -0.604 93.007 6.388 C 100 13.382 100 24.719 93.007 31.712 C 86.014 38.704 74.677 38.704 67.684 31.712 Z M 86.738 25.443 C 90.269 21.911 90.269 16.188 86.738 12.657 C 83.208 9.125 77.483 9.125 73.953 12.657 C 70.422 16.188 70.422 21.911 73.953 25.443 C 77.483 28.973 83.208 28.973 86.738 25.443 Z" style={{ "strokeWidth": 1.98 }} ></path>
+                        <path fill="currentColor" d="M 6.993 31.712 C 0 24.719 0 13.382 6.993 6.388 C 13.986 -0.604 25.323 -0.604 32.316 6.388 C 39.309 13.382 39.309 24.719 32.316 31.712 C 25.323 38.704 13.986 38.704 6.993 31.712 Z M 26.047 25.443 C 29.578 21.911 29.578 16.188 26.047 12.657 C 22.517 9.125 16.792 9.125 13.262 12.657 C 9.731 16.188 9.731 21.911 13.262 25.443 C 16.792 28.973 22.517 28.973 26.047 25.443 Z" style={{ "strokeWidth": 1.98 }}></path>
                     </svg>
                 </div>
-                {this.state.showPathpanel && (
-                    <div className="path-tool-panel">
-                        <textarea
-                            value={this.state.d}
-                            placeholder="path"
-                            className="path-d-input"
-                            onChange={(ev) => {
-                                this.handleChange(ev);
-                            }}
-                        />
-                        <div className="icons">
-                            {icons.map((item, index) => {
-                                return (
-                                    <div className="icon-items" key={index}>
-                                        {item.map((item, index2) => {
-                                            return (
-                                                <div
-                                                    onClick={() => {
-                                                        this.iconChange(item);
-                                                    }}
-                                                    className={`icon-item ${this.state.d === item && "active"
-                                                        }`}
-                                                >
-                                                    <svg key={index2} width="17" height="17">
-                                                        <path
-                                                            fill="currentColor"
-                                                            stroke="#333333"
-                                                            d={item}
-                                                        ></path>
-                                                    </svg>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                );
-                            })}
+                {
+                    this.state.showPathpanel && (
+                        <div className="path-tool-panel">
+                            <textarea
+                                value={this.state.d}
+                                placeholder="path"
+                                className="path-d-input"
+                                onChange={(ev) => {
+                                    this.handleChange(ev);
+                                }}
+                            />
+                            <div className="icons">
+                                {icons.map((item, index) => {
+                                    return (
+                                        <div className="icon-items" key={index}>
+                                            {item.map((item, index2) => {
+                                                return (
+                                                    <div
+                                                        onClick={() => {
+                                                            this.iconChange(item);
+                                                        }}
+                                                        className={`icon-item ${this.state.d === item && "active"
+                                                            }`}
+                                                    >
+                                                        <svg key={index2} width="17" height="17">
+                                                            <path
+                                                                fill="currentColor"
+                                                                stroke="#333333"
+                                                                d={item}
+                                                            ></path>
+                                                        </svg>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    );
+                                })}
+                            </div>
                         </div>
-                    </div>
-                )}
-            </div>
+                    )
+                }
+            </div >
         );
     }
 }

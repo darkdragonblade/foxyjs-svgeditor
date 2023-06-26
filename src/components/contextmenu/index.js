@@ -30,7 +30,7 @@ class Contextmenu extends React.Component {
                 active: buttons === 2 && this.state.active ? true : false,
             });
             if (buttons === 2) {
-                const { bottom, right } = stage.board.getBoundingClientRect();
+                const { bottom, right } = stage.svg.getBoundingClientRect();
                 const { height, width } = document
                     .querySelector(".contextmenu")
                     .getBoundingClientRect();

@@ -1,6 +1,5 @@
 import React from "react";
 import "./index.css";
-import { SVGImage } from "foxyjs";
 import * as pdfjs from 'pdfjs-dist';
 import PDFWORKERENTRY from 'pdfjs-dist/build/pdf.worker.entry';
 pdfjs.GlobalWorkerOptions.workerSrc = PDFWORKERENTRY;
@@ -56,36 +55,8 @@ class Menubar extends React.Component {
 
     async importSvg(ev) {
         this.pointerDown(ev);
-        const config = {
-            types: [
-                {
-                    description: "Svg",
-                    accept: {
-                        "Svg/*": [".svg"],
-                    },
-                },
-            ],
-            excludeAcceptAllOption: true,
-            multiple: false,
-        };
-        try {
-            const res = await window.showOpenFilePicker(config);
-            const f = await res[0].getFile();
-            const reader = new FileReader();
-            reader.readAsText(f);
-            reader.onload = (res) => {
-                const { height: h } = window.stage.board.getBoundingClientRect();
-                const domparser = new DOMParser();
-                const doc = domparser.parseFromString(res.target.result, "text/html");
-                const svg = doc.querySelector("svg");
-                // const { width, height } = svg.viewBox.baseVal;
-                svg.childNodes.forEach((item) => {
-                    if (item.nodeType === 3) return;
-                    const cloneNode = item.cloneNode(true);
-                    window.stage.addGraph(cloneNode);
-                });
-            };
-        } catch (error) { }
+        const stage = window.stage;
+        stage.importManager.svg();
         this.pointerDown(ev);
     }
 
@@ -152,126 +123,23 @@ class Menubar extends React.Component {
 
     async importImage(ev) {
         this.pointerDown(ev);
-        const config = {
-            types: [
-                {
-                    description: "Image",
-                    accept: {
-                        "image/*": [".png", ".gif", ".jpeg", ".jpg"],
-                    },
-                },
-            ],
-            excludeAcceptAllOption: true,
-            multiple: false,
-        };
-        try {
-            const res = await window.showOpenFilePicker(config);
-            const f = await res[0].getFile();
-            const reader = new FileReader();
-            reader.readAsDataURL(f);
-            reader.onload = (res) => {
-                const image = new SVGImage({
-                    x: 200,
-                    y: 200,
-                    width: 200,
-                    height: 200,
-                    href: res.target.result,
-                });
-                window.stage.addGraph(image);
-            };
-        } catch (error) { }
+        const stage = window.stage;
+        stage.importManager.image();
         this.pointerDown(ev);
     }
 
     async exportSvg(ev) {
         this.pointerDown(ev);
         const stage = window.stage;
-        const opts = {
-            suggestedName: 'foxyjs.svg',
-            types: [
-                {
-                    description: "Svg file",
-                    accept: { "svg/image": [".svg"] },
-                },
-            ],
-        };
-
-        const res = await window.showSaveFilePicker(opts);
-        const writable = await res.createWritable();
-        const bgo = document.querySelector("#background-outlines");
-        const x = bgo.getAttribute("x");
-        const y = bgo.getAttribute("y");
-        const w = bgo.getAttribute("width");
-        const h = bgo.getAttribute("height");
-        const svg = `<svg
-            viewBox="${x} ${y} ${w} ${h}"
-            width="${w}"
-            height="${h}"
-            xmlns="http://www.w3.org/2000/svg"
-            xmlns:xlink="http://www.w3.org/1999/xlink"
-        >${stage.currentWorkspace.innerHTML}</svg>`;
-        await writable.write(svg);
-        await writable.close();
+        stage.exportManager.svg();
+        this.pointerDown(ev);
     }
 
     async exportImage(ev) {
         this.pointerDown(ev);
         const stage = window.stage;
-        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-        const workspaces = stage.currentWorkspace;
-        svg.append(workspaces.cloneNode(true));
-        svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-        svg.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
-
-        const image = new Image();
-        image.src =
-            "data:image/svg+xml;base64," +
-            window.btoa(unescape(encodeURIComponent(svg.outerHTML)));
-
-        const img = document.createElement("img");
-        img.src = image.src;
-        image.onload = () => {
-            var canvas = this.convertImageToCanvas(image, 500, 500);
-            var url = canvas.toDataURL("image/png");
-            var bytes = window.atob(url.split(",")[1]);
-            var buffer = new ArrayBuffer(bytes.length);
-            var uint = new Uint8Array(buffer);
-            for (var i = 0; i < bytes.length; i++) {
-                uint[i] = bytes.charCodeAt(i);
-            }
-            var imageFile = new Blob([buffer]);
-            this.saveImage(imageFile, 'foxyjs.png');
-        };
-    }
-
-    async saveImage(blob, name) {
-        try {
-            const handle = await window.showSaveFilePicker({
-                suggestedName: name,
-                types: [
-                    {
-                        description: "PNG file",
-                        accept: {
-                            "image/png": [".png"],
-                        },
-                    },
-                ],
-            });
-            const writable = await handle.createWritable();
-            await writable.write(blob);
-            await writable.close();
-            return handle;
-        } catch (err) {
-            console.error(err.name, err.message);
-        }
-    }
-
-    convertImageToCanvas(image, width, height) {
-        var canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        canvas.getContext("2d").drawImage(image, 0, 0);
-        return canvas;
+        stage.exportManager.image('image/png');
+        this.pointerDown(ev);
     }
 
     pointerDown(ev) {
@@ -376,7 +244,7 @@ class Menubar extends React.Component {
                         <div className="options-item">
                             <a
                                 target="_blank"
-                                href="https://github.com/darkdragonblade/foxyjs-svgeditor"
+                                href="https://github.com/darkdragonblade/foxyjs-svgeditor" rel="noreferrer"
                             >
                                 https://github.com/darkdragonblade/foxyjs-svgeditor
                             </a>

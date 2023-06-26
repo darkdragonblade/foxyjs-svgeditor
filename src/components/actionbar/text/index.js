@@ -9,8 +9,8 @@ class Font extends React.Component {
         super(props);
         this.state = {
             options: [],
-            fontFamily: '',
-            disFontFamily: true,
+            fontFamily: 'arial',
+            disFontFamily: false,
             fontSize: 13,
             disFontSize: true,
             isBold: false,
@@ -114,6 +114,7 @@ class Font extends React.Component {
         this.setState({
             fontFamily: f.family
         });
+        console.log('change');
     }
 
 
@@ -165,7 +166,7 @@ class Font extends React.Component {
                 <div className="items">
                     <Select
                         className={`select ${this.state.disFontFamily && "disabled"}`}
-                        defaultInputValue={this.state.fontFamily}
+                        defaultValue={this.state.fontFamily}
                         options={this.state.options}
                         onChange={(ev) => {
                             this.fontFamily(ev);

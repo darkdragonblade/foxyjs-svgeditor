@@ -6,7 +6,7 @@
     "@testing-library/jest-dom": "^5.16.5",
     "@testing-library/react": "^13.4.0",
     "@testing-library/user-event": "^13.5.0",
-    "foxyjs": "^1.2.16",
+    "foxyjs": "^1.2.17",
     "pdfjs-dist": "^3.7.107",
     "rc-slider": "^10.2.1",
     "react": "^18.2.0",
