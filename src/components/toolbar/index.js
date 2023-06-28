@@ -184,7 +184,7 @@ class Toolbar extends React.Component {
                     </svg>
                 </div>
                 <div
-                    className={`item ${this.state.currentTool === "cog-tool" && "active"
+                    className={`item ${this.state.currentTool === "n-gon-tool" && "active"
                         }`}
                     onClick={() => {
                         this.toggleTool("n-gon-tool");
