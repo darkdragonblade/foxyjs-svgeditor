@@ -3,9 +3,11 @@
     z-index: -999;
     background:none;
     background-color: #fcfcfc;
-    box-shadow: 0 0 10px #cccccc;
+    box-shadow: 0 0 8px #cccccc;
     width: fit-content;
     padding: 4px;
+    border-radius: 4px;
+    overflow: hidden;
 }
 
 .contextmenu.active{
