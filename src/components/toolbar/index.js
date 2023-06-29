@@ -59,7 +59,7 @@ class Toolbar extends React.Component {
         this.state = {
             currentTool: "",
             showPathpanel: false,
-            d: "M 8.5 4.095 C 12.004 -5.959 25.735 4.095 8.5 17.021 C -8.736 4.095 4.995 -5.959 8.5 4.095 Z",
+            d: "M 49.997 92.307 L 47.833 90.86 C 37.549 83.995 24.538 76.23 14.902 64.825 C 4.749 52.807 -0.128 40.466 0.003 27.083 C 0.149 12.148 12.132 0 26.702 0 C 38.267 0 45.956 6.73 49.997 11.589 C 54.044 6.73 61.732 0 73.297 0 C 87.867 0 99.844 12.148 99.997 27.077 C 100.132 40.466 95.255 52.8 85.092 64.818 C 75.456 76.23 62.444 83.995 52.161 90.86 L 49.997 92.307 Z",
         };
     }
 
@@ -206,22 +206,12 @@ class Toolbar extends React.Component {
                     <svg
                         width="18"
                         height="18"
-                        viewBox="0 0 48 48"
-                        fill="none"
+                        viewBox="0 0 100 100"
                         xmlns="http://www.w3.org/2000/svg"
                     >
                         <path
-                            d="M19 32C11.268 32 5 25.732 5 18C5 10.268 11.268 4 19 4C26.732 4 33 10.268 33 18"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                            strokeLinejoin="round"
-                        />
-                        <path
-                            d="M44 18H18V44H44V18Z"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                            strokeLinejoin="round"
+                            fill="currentColor"
+                            d={this.state.d}
                         />
                     </svg>
                     <svg

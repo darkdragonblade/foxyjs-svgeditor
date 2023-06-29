@@ -25,7 +25,7 @@
 }
 
 .toolbar .item.active{
-    background-color: #448aff;
+    background-color: #9141ac;
     color:#ffffff;
 }
 
@@ -83,7 +83,7 @@
 }
 
 .path-tool-panel .icons .icon-item.active{
-    background-color: #448aff;
+    background-color: #9141ac;
     color:#ffffff;
 }
 
@@ -103,7 +103,7 @@
 }
 
 .path-tool-panel .icons .icon-item:hover{
-    background-color: #448aff;
+    background-color: #9141ac;
     color:#ffffff;
 }
 

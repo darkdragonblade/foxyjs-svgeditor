@@ -29,7 +29,7 @@
 }
 
 .items .item.active{
-  background-color: #448aff;
+  background-color: #9141ac;
   color:#ffffff;
 }
 
@@ -39,7 +39,7 @@
 }
 
 .items .item.active:hover{
-    background-color: #448aff;
+    background-color: #9141ac;
     color:#ffffff;
 }
 

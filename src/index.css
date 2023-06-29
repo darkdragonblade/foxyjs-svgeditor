@@ -22,11 +22,11 @@ body ,
 
 
 .rc-slider-track{
-  background-color: #448aff !important;
+  background-color: #9141ac !important;
 }
 
 .rc-slider-handle{
-  border:2px solid #448aff !important;
+  border:2px solid #9141ac !important;
   width: 24px !important;
   height: 24px !important;
   margin-top:-10px !important;

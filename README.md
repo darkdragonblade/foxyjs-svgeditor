@@ -1,7 +1,5 @@
 # foxyjs
 
-![](https://img.shields.io/badge/svg-editor-blue)
-![](https://img.shields.io/badge/svg-foxyjs-red)
 ![](https://darkdragonblade.github.io/foxyjs-svgeditor/static/demo.png)
 
 A **simple and powerful Javascript HTML5 SVG library**.
