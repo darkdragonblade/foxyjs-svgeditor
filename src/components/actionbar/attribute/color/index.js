@@ -112,11 +112,16 @@ class Color extends React.Component {
                 this.init();
             })
         );
+
+        window.addEventListener('eyeDropChange', (e) => {
+            this.colorChange(e.detail.sRGBHex);
+        });
     }
 
     componentWillUnmount() {
         const stage = window.stage;
         stage.board.removeEventListener("selectedelementschange", ev);
+        window.removeEventListener('eyeDropChange');
     }
 
     render() {
