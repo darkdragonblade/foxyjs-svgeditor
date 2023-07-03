@@ -26,13 +26,13 @@ class Zoom extends React.Component {
     render() {
         return (
             <div className="zoom">
-                <div class="zoom-out" style={{ cursor: 'pointer' }} onClick={() => {
+                <div className="zoom-out" style={{ cursor: 'pointer' }} onClick={() => {
                     this.zoomOut();
                 }} >
                     <svg width="17" height="17" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M10.5 24L38.5 24" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" /></svg>
                 </div>
-                <div class="scale">{this.state.scale}%</div>
-                <div class="zoom-in" style={{ cursor: 'pointer' }} onClick={() => {
+                <div className="scale">{this.state.scale}%</div>
+                <div className="zoom-in" style={{ cursor: 'pointer' }} onClick={() => {
                     this.zoomIn();
                 }}>
                     <svg width="17" height="17" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M24.0605 10L24.0239 38" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" /><path d="M10 24L38 24" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" /></svg>
