@@ -6,7 +6,7 @@
     box-shadow: 0 0 8px #cccccc;
     width: fit-content;
     padding: 4px;
-    border-radius: 4px;
+    border-radius: 12px;
     overflow: hidden;
 }
 
@@ -20,6 +20,7 @@
     display: flex;
     align-items: center;
     font-size: 13px;
+    border-radius: 12px;
 }
 
 .contextmenu .item.disabled{

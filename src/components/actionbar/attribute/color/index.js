@@ -10,6 +10,7 @@ class Color extends React.Component {
         this.state = {
             fill: "#000000",
             stroke: "#000000",
+            color: "#000000",
             strokeWidth: 0,
             type: 1,
             selectedObjectElementsLength: 0,
@@ -18,6 +19,8 @@ class Color extends React.Component {
 
     colorChange(color) {
         const stage = window.stage;
+
+
         if (this.state.type === 1) {
             this.setState({
                 fill: color,
@@ -115,7 +118,11 @@ class Color extends React.Component {
 
         try {
             window.addEventListener('eyeDropChange', (e) => {
-                this.colorChange(e.detail.sRGBHex);
+                const color = e.detail.sRGBHex;
+                this.setState({
+                    color,
+                });
+                this.colorChange(color);
             });
         } catch (error) { }
 
