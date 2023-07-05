@@ -177,9 +177,6 @@ class Menubar extends React.Component {
                         >
                             Import Svg
                         </div>
-                        <div className="options-item" onClick={(ev) => {
-                            this.importPdf(ev);
-                        }}>Import Pdf & AI(*.ai)</div>
                         <div
                             className="options-item"
                             onClick={(ev) => {
@@ -188,6 +185,10 @@ class Menubar extends React.Component {
                         >
                             Import Image
                         </div>
+                        <div className="options-item" onClick={(ev) => {
+                            this.importPdf(ev);
+                        }}>Import Pdf & AI(*.ai)</div>
+                        <div className="options-item disabled">Import Dxf</div>
                         <hr />
                         <div
                             className="options-item"
@@ -197,7 +198,6 @@ class Menubar extends React.Component {
                         >
                             Export Svg
                         </div>
-                        <div className="options-item disabled">Export Pdf & AI(*.ai)</div>
                         <div
                             className="options-item"
                             onClick={(ev) => {
@@ -206,6 +206,8 @@ class Menubar extends React.Component {
                         >
                             Export Image
                         </div>
+                        <div className="options-item disabled">Export Pdf & AI(*.ai)</div>
+                        <div className="options-item disabled">Export Dxf</div>
                     </div>
                 </div>
                 <div className="item">

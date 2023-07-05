@@ -40,9 +40,11 @@
     flex-flow: column;
     z-index: 888;
     top:100%;
-    box-shadow: 0 8px 8px #cccccc;
+    box-shadow: 0 0 8px #cccccc;
     background-color: #fcfcfc;
     min-width: 110px;
+    border-radius: 8px;
+    overflow: hidden;
 }
 
 .menubar .options .options-item{

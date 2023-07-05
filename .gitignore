@@ -11,6 +11,9 @@
 # production
 /build
 
+# foxyjs
+/foxy
+
 # misc
 .DS_Store
 .env.local
