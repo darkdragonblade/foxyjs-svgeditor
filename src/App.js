@@ -5,7 +5,7 @@ import Menubar from './components/menubar';
 import Actionbar from './components/actionbar';
 import Contextmenu from './components/contextmenu';
 import Zoom from './components/zoom';
-import Preview from './components/preview';
+// import Preview from './components/preview';
 import { Stage } from 'foxyjs';
 
 
@@ -16,20 +16,13 @@ class App extends React.Component {
     this.state = { stage: void 0 };
   }
 
-  componentDidMount() {
+  componentDidMount = () => {
     const board = document.querySelector('.board');
     const stage = new Stage(board);
     window.stage = stage;
     this.setState({
       stage,
     });
-
-    // if (window.localStorage.foxyjs) {
-    //   stage.currentWorkspace.innerHTML = window.localStorage.foxyjs;
-    // }
-    // stage.board.addEventListener('workspacemutation', () => {
-    //   window.localStorage.foxyjs = stage.currentWorkspace.innerHTML;
-    // });
   }
 
   render() {
