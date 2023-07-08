@@ -65,7 +65,6 @@ class Toolbar extends React.Component {
 
     handleChange(event) {
         const d = event.target.value;
-        console.log(d);
         this.setState({ d });
         window.stage.pathTool.d = d;
     }

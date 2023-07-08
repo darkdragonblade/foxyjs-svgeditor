@@ -5,7 +5,7 @@ class Preview extends React.Component {
     constructor(props) {
         super(props);
         this.state = {
-            preWidth: 180,
+            preWidth: 200,
             width: 0,
             height: 0,
             scale: 1,
@@ -13,7 +13,7 @@ class Preview extends React.Component {
     }
 
     componentDidMount() {
-        window.stage.svg.id = 'preview-svg';
+        window.stage.currentWorkspace.id = 'preview-svg';
         const { width, height } = window.stage.board.getBoundingClientRect();
 
         const scale = width / this.state.preWidth;
@@ -28,7 +28,7 @@ class Preview extends React.Component {
     render() {
         return (
             <div className="preview">
-                <svg width={`${this.state.preWidth}`} height={`${this.state.height / this.state.scale}`} >
+                <svg width={`200`} height={`200`} >
                     <use href="#preview-svg" transform={`scale(${this.state.preWidth / this.state.width} ${(this.state.height / this.state.scale) / this.state.height})`} />
                 </svg>
             </div>

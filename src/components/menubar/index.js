@@ -105,7 +105,6 @@ class Menubar extends React.Component {
                     // let node = document.createNodeIterator(svg, NodeFilter.SHOW_ELEMENT);
                     // for (; curNode = node.nextNode();) {
                     //     if (curNode.localName !== 'svg') {
-                    //         console.log(curNode)
                     //         const cloneNode = curNode.cloneNode(true);
                     //     }
                     // }

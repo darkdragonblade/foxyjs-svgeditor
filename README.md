@@ -5,7 +5,6 @@
 A **simple and powerful Javascript HTML5 SVG library**.
 
 - [online demo][onlineDemo]
-- [reactjs usage][reactjs]
 - [中文官网][website]
 
 ---
@@ -14,7 +13,7 @@ A **simple and powerful Javascript HTML5 SVG library**.
 
 - Out of the box interactions such as scale, move, rotate, skew, group...
 - Built in shapes, controls, animations, image filters, gradients, patterns, brushes...
-- `JPG`, `PNG`, `JSON` and `CANVAS` , `PDF` , `DFX` , `AI(adobe illustrator)`
+- `JPG`, `PNG`, `JSON` and `CANVAS` , `PDF` , `DXF` , `AI(adobe illustrator)`
 
 #### Supported Browsers/Environments
 
@@ -59,6 +58,8 @@ import { Stage, SVGStar } from "foxyjs";
     y: 100,
     rx: 60,
     ry: 60,
+    depth: 0.4,
+    arms: 5,
     fill: "red",
   });
   stage.addGraph(star);
@@ -88,6 +89,8 @@ class App extends React.Component<Props, State> {
       y: 100,
       rx: 60,
       ry: 60,
+      depth: 0.4,
+      arms: 5,
       fill: "red",
     });
     stage.addGraph(star);
@@ -126,6 +129,8 @@ mounted(() => {
     y: 100,
     rx: 60,
     ry: 60,
+    depth: 0.4,
+    arms: 5,
     fill: "red",
   });
   stage.addGraph(star);
@@ -154,6 +159,8 @@ onMounted(() => {
     y: 100,
     rx: 60,
     ry: 60,
+    depth: 0.4,
+    arms: 5,
     fill: "red",
   });
   stage.addGraph(star);
@@ -168,5 +175,4 @@ onMounted(() => {
 
 [mdn_es6]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Modules
 [onlineDemo]: https://darkdragonblade.github.io/foxyjs-svgeditor/demo
-[reactjs]: https://github.com/darkdragonblade/foxyjs-svgeditor/tree/main/src
 [website]: https://darkdragonblade.github.io/foxyjs-website

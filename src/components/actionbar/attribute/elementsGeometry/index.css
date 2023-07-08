@@ -1,0 +1,27 @@
+.elementsGeometry h5{
+    padding:18px 14px 10px 14px;
+}
+
+
+.elementsGeometry .main{
+    padding:0 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.half{
+    width:50%;
+}
+
+.half input{
+    border:0;
+    outline: none;
+    width:100%;
+    border-radius: 6px;
+    margin:6px 0;
+    background-color: rgba(0, 0, 0, 0.08);
+    min-height: 32px;
+    padding:4px 6px;
+    box-sizing: border-box;
+} 

@@ -114,7 +114,6 @@ class Font extends React.Component {
         this.setState({
             fontFamily: f.family
         });
-        console.log('change');
     }
 
 
