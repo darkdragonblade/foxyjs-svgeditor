@@ -1,3 +1,17 @@
+html,body,p,div,h1,h2,h3,h4,h5,h6 {
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body ,
+#root{
+  width: 100%;
+  height: 100%;
+  font-size: 13px;
+  font-family: Arial, Helvetica, sans-serif;
+  color:#333333;
+}
 .App{
   display: flex;
   flex-flow: column;
@@ -15,6 +29,13 @@
   position: relative;
 }
 
+#board{
+  flex: 1 1 0%;
+  contain: strict;
+  width:100%;
+  height:100%;
+}
+
 .board{
   flex: 1 1 0%;
   contain: strict;
@@ -30,4 +51,48 @@
 *[disabled]{
   opacity: 0.4;
   pointer-events: none;
+}
+
+.flex{
+  display: flex;
+}
+
+.flex-justify-center{
+  justify-content: center;
+}
+
+.flex-justify-between{
+  justify-content: space-between;
+}
+
+.flex-justify-around{
+  justify-content: space-around;
+}
+
+.flex-align-center{
+  align-items: center;
+}
+
+.cursor-pointer{
+  cursor: pointer;
+}
+
+.relative{
+  position: relative;
+}
+
+
+.rc-slider-track{
+  background-color: #9141ac !important;
+}
+
+.rc-slider-handle{
+  border:2px solid #9141ac !important;
+  width: 24px !important;
+  height: 24px !important;
+  margin-top:-10px !important;
+}
+
+.rc-slider-handle:focus-visible{
+  box-shadow: 0 0 0 3px #5e9aff !important;
 }

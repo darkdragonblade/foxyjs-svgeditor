@@ -2,7 +2,6 @@ import React from "react";
 import './index.css';
 import Align from "./align";
 import Transform from "./transform";
-import Color from "./color";
 import ElementsGeometry from './elementsGeometry';
 class Attribute extends React.Component {
 
@@ -23,7 +22,6 @@ class Attribute extends React.Component {
                 <ElementsGeometry />
                 <Align />
                 <Transform />
-                <Color />
             </div>
         );
     }

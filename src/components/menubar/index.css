@@ -4,70 +4,39 @@
     align-items: center;
     width: 100%;
     border-bottom: 1px solid #d1d1d1;
+    height: 36px;
+    box-sizing: border-box;
+    padding:0 4px;
 }
 
-.menubar .item{
-    padding: 8px 14px;
-    color:#333333;
-    font-weight: 500;
-    font-size: 12px;
+.menubar .left,.menubar .right{
+    width:200px;
+}
+
+.menubar .right{
+    justify-content: end;
+}
+
+.menubar .btn{
     cursor: pointer;
-    position: relative;
-}
-
-.menubar .item:hover{
-    background-color: #efefef;
-}
-
-.menubar .item:hover .options{
+    border-radius: 4px;
+    padding:6px 8px;
     display: flex;
-}
-
-.menubar .item:focus .options{
-    display: none;
-}
-
-.menubar .item .title{
-    width:100%;
-    height:100%;
-}
-
-.menubar .options{
-    position: absolute;
-    left:0;
-    top:0;
-    display: none;
-    flex-flow: column;
-    z-index: 888;
-    top:100%;
-    box-shadow: 0 0 8px #cccccc;
-    background-color: #fcfcfc;
-    min-width: 110px;
-    border-radius: 8px;
-    overflow: hidden;
-}
-
-.menubar .options .options-item{
-    min-height: 28px;
-    display: flex;
+    justify-content: center;
     align-items: center;
-    white-space: nowrap;
-    padding:4px 12px;
 }
 
-.menubar .options .options-item:hover{
-    background-color: #efefef;
+.menubar .btn:hover{
+    background-color: #ededed;
 }
 
-.menubar hr{
-    width: calc(100% - 8px);
-    margin: 4px 0px 4px 4px;
-    background-color: #d1d1d1;
-    min-height: 1px;
-    border:none;
+.menubar .btn:active{
+    background-color: #d3d3d3;
 }
 
-.menubar .disabled{
-    opacity: 0.4;
-    pointer-events: none;
+.center{
+    border-radius: 6px;
+    background-color: #e8e8e8;
+    padding:4px 16px;
+    font-size: 12px;
 }

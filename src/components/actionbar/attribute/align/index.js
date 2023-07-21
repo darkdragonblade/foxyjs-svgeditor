@@ -19,7 +19,7 @@ class Align extends React.Component {
     init() {
         const stage = window.stage;
         this.setState({
-            canAlign: stage.selectedElements.size > 0x0,
+            canAlign: stage.selectedObjectElements.size > 0x0,
         });
     }
 
