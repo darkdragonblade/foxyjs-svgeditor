@@ -1,12 +1,10 @@
 .toolbar {
     background-color: #fcfcfc;
     display: flex;
+    flex-direction: column;
     z-index: 2;
-    position: fixed;
     bottom:0;
-    left: 50%;
-    transform: translateX(-50%);
-    box-shadow: 0 0 6px #cccccc;
+    border-right: 1px solid #d1d1d1;
 }
 
 .toolbar .item{
@@ -31,14 +29,14 @@
 }
 
 .stroke{
-    margin-left: -4px;
+    margin-top: -4px;
 }
 
-.path-tool-panel{
-    right:0;
+.path-tool-panel {
+    left:50px;
     width: fit-content;
     height:fit-content;
-    bottom:46px;
+    top:calc(10% - 10px);
     background-color: #ffffff;
     box-shadow: 0 0 10px #cccccc;
     position: absolute;
@@ -118,7 +116,7 @@ textarea { resize: none; }
     pointer-events: none;
 }
 
-.colorpanel{
+.colorpanel {
     width: fit-content;
     height:fit-content;
     background-color: #ffffff;
@@ -127,8 +125,8 @@ textarea { resize: none; }
     border-radius: 8px;
     padding:14px;
     box-sizing: border-box;
-    right:calc(-114px + 50%);
-    bottom:52px;
+    left:50px;
+    bottom:0;
     width:228px;
     z-index: 2;
 }
@@ -137,8 +135,8 @@ textarea { resize: none; }
     content: "";
     position: absolute;
     z-index: 1;
-    bottom:-5px;
-    left:calc(50% - 5px);
+    left:-5px;
+    bottom: 15px;
     background-color: #ffffff;
     width:10px;
     height:10px;
