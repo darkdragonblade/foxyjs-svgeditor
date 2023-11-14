@@ -29,6 +29,8 @@
 <script>
 let ColorPicker;
 let event;
+let colorEvent;
+let flag = false;
 export default {
   data() {
     return {
@@ -58,26 +60,29 @@ export default {
         ],
       });
 
-      ColorPicker.on("color:change", (color) => {
-        self.stage.styleManager.set("fill", color.hexString);
-      });
+      ColorPicker.on(
+        "color:change",
+        (colorEvent = (color) => {
+          flag && self.stage.styleManager.set("fill", color.hexString);
+        })
+      );
     },
     getStyle() {
-      const stage = self.stage;
-      const nodes = Array.from(stage.selectedObjectElements.keys());
-      // selectedObjectElementsLength: nodes.length,
-
+      const nodes = Array.from(self.stage.selectedObjectElements.keys());
       if (!nodes?.[0]) return;
       const aD = document.createNodeIterator(nodes[0], NodeFilter.SHOW_ELEMENT);
       let aE = null;
+      flag = false;
+
       for (; (aE = aD.nextNode()); ) {
         if (aE.localName !== "g") {
           const { fill, fillOpacity } = getComputedStyle(aE);
-
           this.fill = fill === "none" ? "rgb(0,0,0)" : fill;
           ColorPicker && (ColorPicker.color.rgbString = this.fill);
           this.fillOpacity = Number(fillOpacity);
-
+          setTimeout(() => {
+            flag = true;
+          });
           break;
         }
       }
@@ -97,6 +102,7 @@ export default {
   },
   beforeUnmount() {
     self.stage.board.removeEventListener("selectedelementschange", event);
+    ColorPicker.on("color:change", colorEvent);
   },
 };
 </script>

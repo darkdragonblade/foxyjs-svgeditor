@@ -141,6 +141,9 @@ export default {
     toggleTool(item) {
       if (item.type === "path-tool") {
         this.openDrawer ? (this.openDrawer = false) : (this.openDrawer = true);
+        if (this.openDrawer) {
+          self.stage.pathTool.d = this.d;
+        }
       } else {
         this.openDrawer = false;
       }
@@ -262,7 +265,7 @@ export default {
 }
 
 .left button.active {
-  background: #1677ff;
+  background: var(--fx-color-primary);
   color: #fff;
 }
 

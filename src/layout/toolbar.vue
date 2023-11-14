@@ -51,29 +51,77 @@
         </a-menu>
       </template>
     </a-dropdown>
-    <!-- <a-dropdown>
+    <a-dropdown @visibleChange="visibleChange">
       <div class="menu-item" @click.prevent>View</div>
       <template #overlay>
         <a-menu>
-          <a-menu-item>
-            <a href="javascript:;">Grid</a>
+          <a-menu-item @click="toggleManualGuides">
+            <div class="flex flex-align-center" style="gap: 6px">
+              <svg
+                v-show="manualGuides"
+                width="17.5"
+                height="17.5"
+                fill="none"
+                viewBox="0 0 48 48"
+              >
+                <use xlink:href="#Check" />
+              </svg>
+              <span>Manual Guides</span>
+            </div>
           </a-menu-item>
-          <a-menu-item>
-            <a href="javascript:;">Smart Guides</a>
+          <a-menu-item @click="toggleGrid">
+            <div class="flex flex-align-center" style="gap: 6px">
+              <svg
+                v-show="showGrid"
+                width="17.5"
+                height="17.5"
+                fill="none"
+                viewBox="0 0 48 48"
+              >
+                <use xlink:href="#Check" />
+              </svg>
+              <span>Grid</span>
+            </div>
           </a-menu-item>
-          <a-menu-item>
-            <a href="javascript:;">Rulers</a>
+          <a-menu-item @click="toggleSmartGuides">
+            <div class="flex flex-align-center" style="gap: 6px">
+              <svg
+                v-show="smartGuides"
+                width="17.5"
+                height="17.5"
+                fill="none"
+                viewBox="0 0 48 48"
+              >
+                <use xlink:href="#Check" />
+              </svg>
+              <span>Smart Guides</span>
+            </div>
           </a-menu-item>
           <a-menu-divider />
-          <a-menu-item>
+          <a-menu-item @click="toggleRulers">
+            <div class="flex flex-align-center" style="gap: 6px">
+              <svg
+                v-show="rulers"
+                width="17.5"
+                height="17.5"
+                fill="none"
+                viewBox="0 0 48 48"
+              >
+                <use xlink:href="#Check" />
+              </svg>
+              <span>Rulers</span>
+            </div>
+          </a-menu-item>
+          <!-- <a-menu-divider /> -->
+          <!-- <a-menu-item>
             <a href="javascript:;">Zoom In</a>
           </a-menu-item>
           <a-menu-item>
             <a href="javascript:;">Zoom Out</a>
-          </a-menu-item>
+          </a-menu-item> -->
         </a-menu>
       </template>
-    </a-dropdown> -->
+    </a-dropdown>
     <!-- <a-dropdown>
       <div class="menu-item" @click.prevent>Help</div>
       <template #overlay>
@@ -94,9 +142,47 @@ export default {
       canUndo: false,
       canRedo: false,
       scale: 100,
+      manualGuides: false,
+      showGrid: false,
+      smartGuides: false,
+      rulers: false,
     };
   },
   methods: {
+    visibleChange() {
+      this.manualGuides = self.stage.manualManager.enabled;
+      this.showGrid = self.stage.gridManager.enabled;
+      this.smartGuides = self.stage.smartManager.enabled;
+      this.rulers = self.stage.rulerManager.enabled;
+    },
+    toggleManualGuides() {
+      if (self.stage.manualManager.enabled) {
+        self.stage.manualManager.disabledCallback();
+      } else {
+        self.stage.manualManager.enabledCallback();
+      }
+    },
+    toggleGrid() {
+      if (self.stage.gridManager.enabled) {
+        self.stage.gridManager.disabledCallback();
+      } else {
+        self.stage.gridManager.enabledCallback();
+      }
+    },
+    toggleSmartGuides() {
+      if (self.stage.smartManager.enabled) {
+        self.stage.smartManager.disabledCallback();
+      } else {
+        self.stage.smartManager.enabledCallback();
+      }
+    },
+    toggleRulers() {
+      if (self.stage.rulerManager.enabled) {
+        self.stage.rulerManager.disabledCallback();
+      } else {
+        self.stage.rulerManager.enabledCallback();
+      }
+    },
     async openSvg() {
       const config = {
         types: [
@@ -189,7 +275,7 @@ export default {
             svg.childNodes.forEach((item) => {
               if (item.nodeType === 3) return;
               const cloneNode = item.cloneNode(true);
-              self.stage.addGraph(cloneNode);
+              self.stage.add(cloneNode);
             });
 
             page.cleanup();

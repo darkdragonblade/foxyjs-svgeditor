@@ -43,136 +43,35 @@ See [browser modules][mdn_es6] for using es6 imports in the browser or use a ded
 ## Quick Start
 
 ```js
-import { Stage, SVGStar } from "foxyjs";
-```
-
-<details><summary><b>Plain HTML</b></summary>
-
-```html
-<div id="container" width="100vw" height="100vh"></div>
-<script>
-  const container = document.getElementById("container");
-  const stage = new Stage(container);
-  const star = new SVGStar({
-    x: 100,
-    y: 100,
-    rx: 60,
-    ry: 60,
-    depth: 0.4,
-    arms: 5,
-    fill: "red",
-  });
-  stage.addGraph(star);
-  stage.selectedElements.set(star);
-  stage.toggleTool("transform-tool");
-</script>
-```
-
-</details>
-
-<details><summary><b>ReactJS</b></summary>
-
-```js
-import React, { useRef } from "react";
-import { Stage, SVGStar } from "foxyjs";
-
-class App extends React.Component<Props, State> {
-  constructor(props: Props) {
-    super(props);
-  }
-
-  componentDidMount() {
-    const board = document.querySelector("#board");
-    const stage = new Stage(board);
-    const star = new SVGStar({
-      x: 100,
-      y: 100,
-      rx: 60,
-      ry: 60,
-      depth: 0.4,
-      arms: 5,
-      fill: "red",
-    });
-    stage.addGraph(star);
-    stage.selectedElements.set(star);
-    stage.toggleTool("transform-tool");
-  }
-
-  render = () => {
-    return (
-      <div className="App">
-        <div id="board"></div>
-      </div>
-    );
-  };
-}
-
-export default App;
-```
-
-</details>
-
-<details><summary><b>Vue2</b></summary>
-
-```js
 <template>
-  <div id="container"></div>
+  <div id="container" width="100vw" height="100vh"></div>
 </template>;
 
 import { Stage, SVGStar } from "foxyjs";
+import "foxyjs/style.css";
 
-mounted(() => {
-  const container = document.getElementById("container");
-  const stage = new Stage(container);
-  const star = new SVGStar({
-    x: 100,
-    y: 100,
-    rx: 60,
-    ry: 60,
-    depth: 0.4,
-    arms: 5,
-    fill: "red",
-  });
-  stage.addGraph(star);
-  stage.selectedElements.set(star);
-  stage.toggleTool("transform-tool");
+const container = document.getElementById("container");
+const stage = new Stage(container, {
+  manualGuides: true,
+  smartGuides: true,
+  showGrid: true,
+  showRulers: true,
 });
-```
-
-</details>
-
-<details><summary><b>Vue3</b></summary>
-
-```js
-<template>
-  <div id="container"></div>
-</template>;
-
-import { computed, onMounted, ref } from "vue";
-import { Stage, SVGStar } from "foxyjs";
-
-onMounted(() => {
-  const container = document.getElementById("container");
-  const stage = new Stage(container);
-  const star = new SVGStar({
-    x: 100,
-    y: 100,
-    rx: 60,
-    ry: 60,
-    depth: 0.4,
-    arms: 5,
-    fill: "red",
-  });
-  stage.addGraph(star);
-  stage.selectedElements.set(star);
-  stage.toggleTool("transform-tool");
+const star = new SVGStar({
+  x: 100,
+  y: 100,
+  rx: 60,
+  ry: 60,
+  depth: 0.4,
+  arms: 5,
+  fill: "red",
 });
+stage.add(star);
+stage.selectedElements.set(star);
+stage.toggleTool("transform-tool");
 ```
-
-</details>
-
----
 
 [mdn_es6]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Modules
 [onlineDemo]: https://darkdragonblade.github.io/foxyjs-svgeditor/demo
+[document]: https://darkdragonblade.github.io/foxyjs-svgeditor/document
 [website]: https://darkdragonblade.github.io/foxyjs-website

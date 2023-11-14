@@ -49,6 +49,8 @@
 <script>
 let ColorPicker;
 let event;
+let colorEvent;
+let flag = false;
 export default {
   data() {
     return {
@@ -79,14 +81,17 @@ export default {
         ],
       });
 
-      ColorPicker.on("color:change", (color) => {
-        self.stage.styleManager.set("stroke", color.hexString);
-      });
+      ColorPicker.on(
+        "color:change",
+        (colorEvent = (color) => {
+          flag && self.stage.styleManager.set("stroke", color.hexString);
+        })
+      );
     },
     getStyle() {
       const stage = self.stage;
       const nodes = Array.from(stage.selectedObjectElements.keys());
-      // selectedObjectElementsLength: nodes.length,
+      flag = false;
 
       if (!nodes?.[0]) return;
       const aD = document.createNodeIterator(nodes[0], NodeFilter.SHOW_ELEMENT);
@@ -99,6 +104,9 @@ export default {
           ColorPicker && (ColorPicker.color.rgbString = this.stroke);
           this.strokeOpacity = Number(strokeOpacity);
           this.strokeWidth = parseInt(strokeWidth);
+          setTimeout(() => {
+            flag = true;
+          });
 
           break;
         }
@@ -125,6 +133,7 @@ export default {
   },
   beforeUnmount() {
     self.stage.board.removeEventListener("selectedelementschange", event);
+    ColorPicker.on("color:change", colorEvent);
   },
 };
 </script>

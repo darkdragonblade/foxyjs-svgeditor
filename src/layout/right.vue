@@ -131,7 +131,7 @@ export default {
 }
 
 .right button.active {
-  background: #1677ff;
+  background: var(--fx-color-primary);
   color: #fff;
 }
 

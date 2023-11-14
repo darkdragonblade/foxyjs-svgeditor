@@ -209,10 +209,10 @@ export default {
 
 .history-item-active {
   color: #fff;
-  background: #1677ff;
+  background: var(--fx-color-primary);
 }
 .history-item-active:hover {
   color: #fff;
-  background: #1677ff;
+  background: var(--fx-color-primary);
 }
 </style>

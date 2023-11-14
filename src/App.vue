@@ -14,6 +14,7 @@ import Toolbar from "./layout/toolbar.vue";
 import Left from "./layout/left.vue";
 import Right from "./layout/right.vue";
 import { Stage } from "foxyjs";
+import "foxyjs/style.css";
 export default {
   components: {
     Toolbar,
@@ -27,8 +28,12 @@ export default {
   },
   methods: {
     initStage() {
-      const board = document.querySelector("main");
-      this.stage = self.stage = new Stage(board);
+      this.stage = self.stage = new Stage(document.querySelector("main"), {
+        manualGuides: true,
+        smartGuides: true,
+        showGrid: true,
+        showRulers: true,
+      });
     },
   },
   mounted() {
@@ -51,6 +56,5 @@ export default {
 
 main {
   flex: 1;
-  position: relative;
 }
 </style>
