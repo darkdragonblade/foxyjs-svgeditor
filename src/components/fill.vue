@@ -16,6 +16,7 @@
       v-model:value="fillOpacity"
     />
     <a-input-number
+      @keydown.stop
       :disabled="!canUse"
       style="width: 80px"
       v-model:value="fillOpacity"

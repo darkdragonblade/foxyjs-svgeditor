@@ -45,8 +45,12 @@
           style="width: 80%"
           v-model:value="data.fontSize"
           @change="setFontSize"
+          :step="1"
+          :min="12"
+          :max="120"
         />
         <a-input-number
+          @keydown.stop
           @blur="setFontSize"
           :disabled="data.disFontSize"
           style="width: 80px"
@@ -149,8 +153,6 @@
 </template>
 
 <script>
-import { sleep } from "foxyjs/utils/common";
-
 let ev;
 export default {
   data() {

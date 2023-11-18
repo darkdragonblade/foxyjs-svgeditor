@@ -22,11 +22,11 @@
 
 (function webpackUniversalModuleDefinition(root, factory) {
   if (typeof exports === 'object' && typeof module === 'object')
-    module.exports = factory();
+    module.exports = root.pdfjsWorker = factory();
   else if (typeof define === 'function' && define.amd)
-    define("pdfjs-dist/build/pdf.worker", [], factory);
+    define("pdfjs-dist/build/pdf.worker", [], () => { return (root.pdfjsWorker = factory()); });
   else if (typeof exports === 'object')
-    exports["pdfjs-dist/build/pdf.worker"] = factory();
+    exports["pdfjs-dist/build/pdf.worker"] = root.pdfjsWorker = factory();
   else
     root["pdfjs-dist/build/pdf.worker"] = root.pdfjsWorker = factory();
 })(globalThis, () => {
@@ -47,11 +47,12 @@
         var _core_utils = __w_pdfjs_require__(3);
         var _primitives = __w_pdfjs_require__(4);
         var _pdf_manager = __w_pdfjs_require__(6);
-        var _cleanup_helper = __w_pdfjs_require__(72);
-        var _writer = __w_pdfjs_require__(66);
-        var _is_node = __w_pdfjs_require__(103);
+        var _annotation = __w_pdfjs_require__(10);
+        var _cleanup_helper = __w_pdfjs_require__(68);
+        var _writer = __w_pdfjs_require__(73);
         var _message_handler = __w_pdfjs_require__(104);
         var _worker_stream = __w_pdfjs_require__(105);
+        var _struct_tree = __w_pdfjs_require__(72);
         class WorkerTask {
           constructor(name) {
             this.name = name;
@@ -101,7 +102,7 @@
               docId,
               apiVersion
             } = docParams;
-            const workerVersion = '3.7.107';
+            const workerVersion = '3.11.174';
             if (apiVersion !== workerVersion) {
               throw new Error(`The API version "${apiVersion}" does not match ` + `the Worker version "${workerVersion}".`);
             }
@@ -359,9 +360,6 @@
             handler.on("GetAttachments", function (data) {
               return pdfManager.ensureCatalog("attachments");
             });
-            handler.on("GetJavaScript", function (data) {
-              return pdfManager.ensureCatalog("javaScript");
-            });
             handler.on("GetDocJSActions", function (data) {
               return pdfManager.ensureCatalog("jsActions");
             });
@@ -417,21 +415,62 @@
             handler.on("GetCalculationOrderIds", function (data) {
               return pdfManager.ensureDoc("calculationOrderIds");
             });
-            handler.on("SaveDocument", function ({
+            handler.on("SaveDocument", async function ({
               isPureXfa,
               numPages,
               annotationStorage,
               filename
             }) {
-              const promises = [pdfManager.requestLoadedStream(), pdfManager.ensureCatalog("acroForm"), pdfManager.ensureCatalog("acroFormRef"), pdfManager.ensureDoc("xref"), pdfManager.ensureDoc("startXRef")];
+              const globalPromises = [pdfManager.requestLoadedStream(), pdfManager.ensureCatalog("acroForm"), pdfManager.ensureCatalog("acroFormRef"), pdfManager.ensureDoc("startXRef"), pdfManager.ensureDoc("xref"), pdfManager.ensureDoc("linearization"), pdfManager.ensureCatalog("structTreeRoot")];
+              const promises = [];
               const newAnnotationsByPage = !isPureXfa ? (0, _core_utils.getNewAnnotationsMap)(annotationStorage) : null;
+              const [stream, acroForm, acroFormRef, startXRef, xref, linearization, _structTreeRoot] = await Promise.all(globalPromises);
+              const catalogRef = xref.trailer.getRaw("Root") || null;
+              let structTreeRoot;
               if (newAnnotationsByPage) {
+                if (!_structTreeRoot) {
+                  if (await _struct_tree.StructTreeRoot.canCreateStructureTree({
+                    catalogRef,
+                    pdfManager,
+                    newAnnotationsByPage
+                  })) {
+                    structTreeRoot = null;
+                  }
+                } else if (await _structTreeRoot.canUpdateStructTree({
+                  pdfManager,
+                  newAnnotationsByPage
+                })) {
+                  structTreeRoot = _structTreeRoot;
+                }
+                const imagePromises = _annotation.AnnotationFactory.generateImages(annotationStorage.values(), xref, pdfManager.evaluatorOptions.isOffscreenCanvasSupported);
+                const newAnnotationPromises = structTreeRoot === undefined ? promises : [];
                 for (const [pageIndex, annotations] of newAnnotationsByPage) {
-                  promises.push(pdfManager.getPage(pageIndex).then(page => {
+                  newAnnotationPromises.push(pdfManager.getPage(pageIndex).then(page => {
                     const task = new WorkerTask(`Save (editor): page ${pageIndex}`);
-                    return page.saveNewAnnotations(handler, task, annotations).finally(function () {
+                    return page.saveNewAnnotations(handler, task, annotations, imagePromises).finally(function () {
                       finishWorkerTask(task);
                     });
+                  }));
+                }
+                if (structTreeRoot === null) {
+                  promises.push(Promise.all(newAnnotationPromises).then(async newRefs => {
+                    await _struct_tree.StructTreeRoot.createStructureTree({
+                      newAnnotationsByPage,
+                      xref,
+                      catalogRef,
+                      pdfManager,
+                      newRefs
+                    });
+                    return newRefs;
+                  }));
+                } else if (structTreeRoot) {
+                  promises.push(Promise.all(newAnnotationPromises).then(async newRefs => {
+                    await structTreeRoot.updateStructureTree({
+                      newAnnotationsByPage,
+                      pdfManager,
+                      newRefs
+                    });
+                    return newRefs;
                   }));
                 }
               }
@@ -447,76 +486,73 @@
                   }));
                 }
               }
-              return Promise.all(promises).then(function ([stream, acroForm, acroFormRef, xref, startXRef, ...refs]) {
-                let newRefs = [];
-                let xfaData = null;
-                if (isPureXfa) {
-                  xfaData = refs[0];
-                  if (!xfaData) {
-                    return stream.bytes;
-                  }
-                } else {
-                  newRefs = refs.flat(2);
-                  if (newRefs.length === 0) {
-                    return stream.bytes;
+              const refs = await Promise.all(promises);
+              let newRefs = [];
+              let xfaData = null;
+              if (isPureXfa) {
+                xfaData = refs[0];
+                if (!xfaData) {
+                  return stream.bytes;
+                }
+              } else {
+                newRefs = refs.flat(2);
+                if (newRefs.length === 0) {
+                  return stream.bytes;
+                }
+              }
+              const needAppearances = acroFormRef && acroForm instanceof _primitives.Dict && newRefs.some(ref => ref.needAppearances);
+              const xfa = acroForm instanceof _primitives.Dict && acroForm.get("XFA") || null;
+              let xfaDatasetsRef = null;
+              let hasXfaDatasetsEntry = false;
+              if (Array.isArray(xfa)) {
+                for (let i = 0, ii = xfa.length; i < ii; i += 2) {
+                  if (xfa[i] === "datasets") {
+                    xfaDatasetsRef = xfa[i + 1];
+                    hasXfaDatasetsEntry = true;
                   }
                 }
-                const needAppearances = acroFormRef && acroForm instanceof _primitives.Dict && newRefs.some(ref => ref.needAppearances);
-                const xfa = acroForm instanceof _primitives.Dict && acroForm.get("XFA") || null;
-                let xfaDatasetsRef = null;
-                let hasXfaDatasetsEntry = false;
-                if (Array.isArray(xfa)) {
-                  for (let i = 0, ii = xfa.length; i < ii; i += 2) {
-                    if (xfa[i] === "datasets") {
-                      xfaDatasetsRef = xfa[i + 1];
-                      hasXfaDatasetsEntry = true;
+                if (xfaDatasetsRef === null) {
+                  xfaDatasetsRef = xref.getNewTemporaryRef();
+                }
+              } else if (xfa) {
+                (0, _util.warn)("Unsupported XFA type.");
+              }
+              let newXrefInfo = Object.create(null);
+              if (xref.trailer) {
+                const infoObj = Object.create(null);
+                const xrefInfo = xref.trailer.get("Info") || null;
+                if (xrefInfo instanceof _primitives.Dict) {
+                  xrefInfo.forEach((key, value) => {
+                    if (typeof value === "string") {
+                      infoObj[key] = (0, _util.stringToPDFString)(value);
                     }
-                  }
-                  if (xfaDatasetsRef === null) {
-                    xfaDatasetsRef = xref.getNewTemporaryRef();
-                  }
-                } else if (xfa) {
-                  (0, _util.warn)("Unsupported XFA type.");
-                }
-                let newXrefInfo = Object.create(null);
-                if (xref.trailer) {
-                  const infoObj = Object.create(null);
-                  const xrefInfo = xref.trailer.get("Info") || null;
-                  if (xrefInfo instanceof _primitives.Dict) {
-                    xrefInfo.forEach((key, value) => {
-                      if (typeof value === "string") {
-                        infoObj[key] = (0, _util.stringToPDFString)(value);
-                      }
-                    });
-                  }
-                  newXrefInfo = {
-                    rootRef: xref.trailer.getRaw("Root") || null,
-                    encryptRef: xref.trailer.getRaw("Encrypt") || null,
-                    newRef: xref.getNewTemporaryRef(),
-                    infoRef: xref.trailer.getRaw("Info") || null,
-                    info: infoObj,
-                    fileIds: xref.trailer.get("ID") || null,
-                    startXRef: xref.lastXRefStreamPos ?? startXRef,
-                    filename
-                  };
-                }
-                try {
-                  return (0, _writer.incrementalUpdate)({
-                    originalData: stream.bytes,
-                    xrefInfo: newXrefInfo,
-                    newRefs,
-                    xref,
-                    hasXfa: !!xfa,
-                    xfaDatasetsRef,
-                    hasXfaDatasetsEntry,
-                    needAppearances,
-                    acroFormRef,
-                    acroForm,
-                    xfaData
                   });
-                } finally {
-                  xref.resetNewTemporaryRef();
                 }
+                newXrefInfo = {
+                  rootRef: catalogRef,
+                  encryptRef: xref.trailer.getRaw("Encrypt") || null,
+                  newRef: xref.getNewTemporaryRef(),
+                  infoRef: xref.trailer.getRaw("Info") || null,
+                  info: infoObj,
+                  fileIds: xref.trailer.get("ID") || null,
+                  startXRef: linearization ? startXRef : xref.lastXRefStreamPos ?? startXRef,
+                  filename
+                };
+              }
+              return (0, _writer.incrementalUpdate)({
+                originalData: stream.bytes,
+                xrefInfo: newXrefInfo,
+                newRefs,
+                xref,
+                hasXfa: !!xfa,
+                xfaDatasetsRef,
+                hasXfaDatasetsEntry,
+                needAppearances,
+                acroFormRef,
+                acroForm,
+                xfaData
+              }).finally(() => {
+                xref.resetNewTemporaryRef();
               });
             });
             handler.on("GetOperatorList", function (data, sink) {
@@ -628,7 +664,7 @@
         function isMessagePort(maybePort) {
           return typeof maybePort.postMessage === "function" && "onmessage" in maybePort;
         }
-        if (typeof window === "undefined" && !_is_node.isNodeJS && typeof self !== "undefined" && isMessagePort(self)) {
+        if (typeof window === "undefined" && !_util.isNodeJS && typeof self !== "undefined" && isMessagePort(self)) {
           WorkerMessageHandler.initializeFromPort(self);
         }
 
@@ -642,15 +678,17 @@
         Object.defineProperty(exports, "__esModule", ({
           value: true
         }));
-        exports.VerbosityLevel = exports.Util = exports.UnknownErrorException = exports.UnexpectedResponseException = exports.TextRenderingMode = exports.RenderingIntentFlag = exports.PromiseCapability = exports.PermissionFlag = exports.PasswordResponses = exports.PasswordException = exports.PageActionEventType = exports.OPS = exports.MissingPDFException = exports.MAX_IMAGE_SIZE_TO_CACHE = exports.LINE_FACTOR = exports.LINE_DESCENT_FACTOR = exports.InvalidPDFException = exports.ImageKind = exports.IDENTITY_MATRIX = exports.FormatError = exports.FeatureTest = exports.FONT_IDENTITY_MATRIX = exports.DocumentActionEventType = exports.CMapCompressionType = exports.BaseException = exports.BASELINE_FACTOR = exports.AnnotationType = exports.AnnotationStateModelType = exports.AnnotationReviewState = exports.AnnotationReplyType = exports.AnnotationMode = exports.AnnotationMarkedState = exports.AnnotationFlag = exports.AnnotationFieldFlag = exports.AnnotationEditorType = exports.AnnotationEditorPrefix = exports.AnnotationEditorParamsType = exports.AnnotationBorderStyleType = exports.AnnotationActionEventType = exports.AbortException = void 0;
+        exports.VerbosityLevel = exports.Util = exports.UnknownErrorException = exports.UnexpectedResponseException = exports.TextRenderingMode = exports.RenderingIntentFlag = exports.PromiseCapability = exports.PermissionFlag = exports.PasswordResponses = exports.PasswordException = exports.PageActionEventType = exports.OPS = exports.MissingPDFException = exports.MAX_IMAGE_SIZE_TO_CACHE = exports.LINE_FACTOR = exports.LINE_DESCENT_FACTOR = exports.InvalidPDFException = exports.ImageKind = exports.IDENTITY_MATRIX = exports.FormatError = exports.FeatureTest = exports.FONT_IDENTITY_MATRIX = exports.DocumentActionEventType = exports.CMapCompressionType = exports.BaseException = exports.BASELINE_FACTOR = exports.AnnotationType = exports.AnnotationReplyType = exports.AnnotationPrefix = exports.AnnotationMode = exports.AnnotationFlag = exports.AnnotationFieldFlag = exports.AnnotationEditorType = exports.AnnotationEditorPrefix = exports.AnnotationEditorParamsType = exports.AnnotationBorderStyleType = exports.AnnotationActionEventType = exports.AbortException = void 0;
         exports.assert = assert;
         exports.bytesToString = bytesToString;
         exports.createValidAbsoluteUrl = createValidAbsoluteUrl;
         exports.getModificationDate = getModificationDate;
+        exports.getUuid = getUuid;
         exports.getVerbosityLevel = getVerbosityLevel;
         exports.info = info;
         exports.isArrayBuffer = isArrayBuffer;
         exports.isArrayEqual = isArrayEqual;
+        exports.isNodeJS = void 0;
         exports.normalizeUnicode = normalizeUnicode;
         exports.objectFromMap = objectFromMap;
         exports.objectSize = objectSize;
@@ -663,7 +701,8 @@
         exports.unreachable = unreachable;
         exports.utf8StringToString = utf8StringToString;
         exports.warn = warn;
-        ;
+        const isNodeJS = typeof process === "object" && process + "" === "[object process]" && !process.versions.nw && !(process.versions.electron && process.type && process.type !== "browser");
+        exports.isNodeJS = isNodeJS;
         const IDENTITY_MATRIX = [1, 0, 0, 1, 0, 0];
         exports.IDENTITY_MATRIX = IDENTITY_MATRIX;
         const FONT_IDENTITY_MATRIX = [0.001, 0, 0, 0.001, 0, 0];
@@ -700,16 +739,19 @@
           DISABLE: -1,
           NONE: 0,
           FREETEXT: 3,
+          STAMP: 13,
           INK: 15
         };
         exports.AnnotationEditorType = AnnotationEditorType;
         const AnnotationEditorParamsType = {
-          FREETEXT_SIZE: 1,
-          FREETEXT_COLOR: 2,
-          FREETEXT_OPACITY: 3,
-          INK_COLOR: 11,
-          INK_THICKNESS: 12,
-          INK_OPACITY: 13
+          RESIZE: 1,
+          CREATE: 2,
+          FREETEXT_SIZE: 11,
+          FREETEXT_COLOR: 12,
+          FREETEXT_OPACITY: 13,
+          INK_COLOR: 21,
+          INK_THICKNESS: 22,
+          INK_OPACITY: 23
         };
         exports.AnnotationEditorParamsType = AnnotationEditorParamsType;
         const PermissionFlag = {
@@ -771,24 +813,6 @@
           REDACT: 26
         };
         exports.AnnotationType = AnnotationType;
-        const AnnotationStateModelType = {
-          MARKED: "Marked",
-          REVIEW: "Review"
-        };
-        exports.AnnotationStateModelType = AnnotationStateModelType;
-        const AnnotationMarkedState = {
-          MARKED: "Marked",
-          UNMARKED: "Unmarked"
-        };
-        exports.AnnotationMarkedState = AnnotationMarkedState;
-        const AnnotationReviewState = {
-          ACCEPTED: "Accepted",
-          REJECTED: "Rejected",
-          CANCELLED: "Cancelled",
-          COMPLETED: "Completed",
-          NONE: "None"
-        };
-        exports.AnnotationReviewState = AnnotationReviewState;
         const AnnotationReplyType = {
           GROUP: "Group",
           REPLY: "R"
@@ -1028,14 +1052,14 @@
               if (options.tryConvertEncoding) {
                 try {
                   url = stringToUTF8String(url);
-                } catch (ex) { }
+                } catch { }
               }
             }
             const absoluteUrl = baseUrl ? new URL(url, baseUrl) : new URL(url);
             if (_isValidProtocol(absoluteUrl)) {
               return absoluteUrl;
             }
-          } catch (ex) { }
+          } catch { }
           return null;
         }
         function shadow(obj, prop, value, nonSerializable = false) {
@@ -1156,7 +1180,7 @@
           try {
             new Function("");
             return true;
-          } catch (e) {
+          } catch {
             return false;
           }
         }
@@ -1181,6 +1205,9 @@
               isWin: navigator.platform.includes("Win"),
               isMac: navigator.platform.includes("Mac")
             });
+          }
+          static get isCSSRoundSupported() {
+            return shadow(this, "isCSSRoundSupported", globalThis.CSS?.supports?.("width: round(1.5px, 1px)"));
           }
         }
         exports.FeatureTest = FeatureTest;
@@ -1248,10 +1275,10 @@
             return [xt, yt];
           }
           static getAxialAlignedBoundingBox(r, m) {
-            const p1 = Util.applyTransform(r, m);
-            const p2 = Util.applyTransform(r.slice(2, 4), m);
-            const p3 = Util.applyTransform([r[0], r[3]], m);
-            const p4 = Util.applyTransform([r[2], r[1]], m);
+            const p1 = this.applyTransform(r, m);
+            const p2 = this.applyTransform(r.slice(2, 4), m);
+            const p3 = this.applyTransform([r[0], r[3]], m);
+            const p4 = this.applyTransform([r[2], r[1]], m);
             return [Math.min(p1[0], p2[0], p3[0], p4[0]), Math.min(p1[1], p2[1], p3[1], p4[1]), Math.max(p1[0], p2[0], p3[0], p4[0]), Math.max(p1[1], p2[1], p3[1], p4[1])];
           }
           static inverseTransform(m) {
@@ -1435,6 +1462,22 @@
             return p1 ? p1.normalize("NFKC") : NormalizationMap.get(p2);
           });
         }
+        function getUuid() {
+          if (typeof crypto !== "undefined" && typeof crypto?.randomUUID === "function") {
+            return crypto.randomUUID();
+          }
+          const buf = new Uint8Array(32);
+          if (typeof crypto !== "undefined" && typeof crypto?.getRandomValues === "function") {
+            crypto.getRandomValues(buf);
+          } else {
+            for (let i = 0; i < 32; i++) {
+              buf[i] = Math.floor(Math.random() * 255);
+            }
+          }
+          return bytesToString(buf);
+        }
+        const AnnotationPrefix = "pdfjs_internal_id_";
+        exports.AnnotationPrefix = AnnotationPrefix;
 
         /***/
 }),
@@ -2059,6 +2102,13 @@
             properties.clear();
             return mergedDict.size > 0 ? mergedDict : Dict.empty;
           }
+          clone() {
+            const dict = new Dict(this.xref);
+            for (const key of this.getKeys()) {
+              dict.set(key, this.getRaw(key));
+            }
+            return dict;
+          }
         }
         exports.Dict = Dict;
         class Ref {
@@ -2071,6 +2121,17 @@
               return `${this.num}R`;
             }
             return `${this.num}R${this.gen}`;
+          }
+          static fromString(str) {
+            const ref = RefCache[str];
+            if (ref) {
+              return ref;
+            }
+            const m = /^(\d+)R(\d*)$/.exec(str);
+            if (!m || m[1] === "0") {
+              return null;
+            }
+            return RefCache[str] = new Ref(parseInt(m[1]), !m[2] ? 0 : parseInt(m[2]));
           }
           static get(num, gen) {
             const key = gen === 0 ? `${num}R` : `${num}R${gen}`;
@@ -2268,8 +2329,10 @@
             return this._password;
           }
           get docBaseUrl() {
-            const catalog = this.pdfDocument.catalog;
-            return (0, _util.shadow)(this, "docBaseUrl", catalog.baseUrl || this._docBaseUrl);
+            return this._docBaseUrl;
+          }
+          get catalog() {
+            return this.pdfDocument.catalog;
           }
           ensureDoc(prop, args) {
             return this.ensure(this.pdfDocument, prop, args);
@@ -2543,10 +2606,8 @@
               if (start + length > this.progressiveDataLength) {
                 this.ensureRange(start, start + length);
               }
-            } else {
-              if (start >= this.progressiveDataLength) {
-                this.ensureByte(start);
-              }
+            } else if (start >= this.progressiveDataLength) {
+              this.ensureByte(start);
             }
             function ChunkedStreamSubstream() { }
             ChunkedStreamSubstream.prototype = Object.create(this);
@@ -2816,9 +2877,7 @@
           }
           abort(reason) {
             this.aborted = true;
-            if (this.pdfNetworkStream) {
-              this.pdfNetworkStream.cancelAllRequests(reason);
-            }
+            this.pdfNetworkStream?.cancelAllRequests(reason);
             for (const capability of this._promisesByRequest.values()) {
               capability.reject(reason);
             }
@@ -2918,26 +2977,26 @@
           value: true
         }));
         exports.Page = exports.PDFDocument = void 0;
-        var _annotation = __w_pdfjs_require__(10);
         var _util = __w_pdfjs_require__(2);
+        var _annotation = __w_pdfjs_require__(10);
         var _core_utils = __w_pdfjs_require__(3);
         var _primitives = __w_pdfjs_require__(4);
         var _xfa_fonts = __w_pdfjs_require__(51);
         var _base_stream = __w_pdfjs_require__(5);
-        var _crypto = __w_pdfjs_require__(68);
-        var _catalog = __w_pdfjs_require__(70);
-        var _cleanup_helper = __w_pdfjs_require__(72);
-        var _dataset_reader = __w_pdfjs_require__(101);
+        var _crypto = __w_pdfjs_require__(74);
+        var _catalog = __w_pdfjs_require__(66);
+        var _cleanup_helper = __w_pdfjs_require__(68);
+        var _dataset_reader = __w_pdfjs_require__(102);
         var _parser = __w_pdfjs_require__(16);
         var _stream = __w_pdfjs_require__(8);
         var _object_loader = __w_pdfjs_require__(76);
         var _operator_list = __w_pdfjs_require__(64);
         var _evaluator = __w_pdfjs_require__(13);
         var _decode_stream = __w_pdfjs_require__(18);
-        var _struct_tree = __w_pdfjs_require__(75);
-        var _writer = __w_pdfjs_require__(66);
+        var _struct_tree = __w_pdfjs_require__(72);
+        var _writer = __w_pdfjs_require__(73);
         var _factory = __w_pdfjs_require__(77);
-        var _xref = __w_pdfjs_require__(102);
+        var _xref = __w_pdfjs_require__(103);
         const DEFAULT_USER_UNIT = 1.0;
         const LETTER_SIZE_MEDIABOX = [0, 0, 612, 792];
         class Page {
@@ -3082,7 +3141,25 @@
               bbox: this.xfaFactory.getBoundingBox(this.pageIndex)
             } : null);
           }
-          async saveNewAnnotations(handler, task, annotations) {
+          #replaceIdByRef(annotations, deletedAnnotations, existingAnnotations) {
+            for (const annotation of annotations) {
+              if (annotation.id) {
+                const ref = _primitives.Ref.fromString(annotation.id);
+                if (!ref) {
+                  (0, _util.warn)(`A non-linked annotation cannot be modified: ${annotation.id}`);
+                  continue;
+                }
+                if (annotation.deleted) {
+                  deletedAnnotations.put(ref);
+                  continue;
+                }
+                existingAnnotations?.put(ref);
+                annotation.ref = ref;
+                delete annotation.id;
+              }
+            }
+          }
+          async saveNewAnnotations(handler, task, annotations, imagePromises) {
             if (this.xfaFactory) {
               throw new Error("XFA: Cannot save new annotations.");
             }
@@ -3098,22 +3175,23 @@
               systemFontCache: this.systemFontCache,
               options: this.evaluatorOptions
             });
+            const deletedAnnotations = new _primitives.RefSet();
+            const existingAnnotations = new _primitives.RefSet();
+            this.#replaceIdByRef(annotations, deletedAnnotations, existingAnnotations);
             const pageDict = this.pageDict;
-            const annotationsArray = this.annotations.slice();
-            const newData = await _annotation.AnnotationFactory.saveNewAnnotations(partialEvaluator, task, annotations);
+            const annotationsArray = this.annotations.filter(a => !(a instanceof _primitives.Ref && deletedAnnotations.has(a)));
+            const newData = await _annotation.AnnotationFactory.saveNewAnnotations(partialEvaluator, task, annotations, imagePromises);
             for (const {
               ref
             } of newData.annotations) {
-              annotationsArray.push(ref);
+              if (ref instanceof _primitives.Ref && !existingAnnotations.has(ref)) {
+                annotationsArray.push(ref);
+              }
             }
             const savedDict = pageDict.get("Annots");
             pageDict.set("Annots", annotationsArray);
             const buffer = [];
-            let transform = null;
-            if (this.xref.encrypt) {
-              transform = this.xref.encrypt.createCipherTransform(this.ref.num, this.ref.gen);
-            }
-            await (0, _writer.writeObject)(this.ref, pageDict, buffer, transform);
+            await (0, _writer.writeObject)(this.ref, pageDict, buffer, this.xref);
             if (savedDict) {
               pageDict.set("Annots", savedDict);
             }
@@ -3185,11 +3263,47 @@
               options: this.evaluatorOptions
             });
             const newAnnotationsByPage = !this.xfaFactory ? (0, _core_utils.getNewAnnotationsMap)(annotationStorage) : null;
+            let deletedAnnotations = null;
             let newAnnotationsPromise = Promise.resolve(null);
             if (newAnnotationsByPage) {
               const newAnnotations = newAnnotationsByPage.get(this.pageIndex);
               if (newAnnotations) {
-                newAnnotationsPromise = _annotation.AnnotationFactory.printNewAnnotations(partialEvaluator, task, newAnnotations);
+                const annotationGlobalsPromise = this.pdfManager.ensureDoc("annotationGlobals");
+                let imagePromises;
+                const missingBitmaps = new Set();
+                for (const {
+                  bitmapId,
+                  bitmap
+                } of newAnnotations) {
+                  if (bitmapId && !bitmap && !missingBitmaps.has(bitmapId)) {
+                    missingBitmaps.add(bitmapId);
+                  }
+                }
+                const {
+                  isOffscreenCanvasSupported
+                } = this.evaluatorOptions;
+                if (missingBitmaps.size > 0) {
+                  const annotationWithBitmaps = newAnnotations.slice();
+                  for (const [key, annotation] of annotationStorage) {
+                    if (!key.startsWith(_util.AnnotationEditorPrefix)) {
+                      continue;
+                    }
+                    if (annotation.bitmap && missingBitmaps.has(annotation.bitmapId)) {
+                      annotationWithBitmaps.push(annotation);
+                    }
+                  }
+                  imagePromises = _annotation.AnnotationFactory.generateImages(annotationWithBitmaps, this.xref, isOffscreenCanvasSupported);
+                } else {
+                  imagePromises = _annotation.AnnotationFactory.generateImages(newAnnotations, this.xref, isOffscreenCanvasSupported);
+                }
+                deletedAnnotations = new _primitives.RefSet();
+                this.#replaceIdByRef(newAnnotations, deletedAnnotations, null);
+                newAnnotationsPromise = annotationGlobalsPromise.then(annotationGlobals => {
+                  if (!annotationGlobals) {
+                    return null;
+                  }
+                  return _annotation.AnnotationFactory.printNewAnnotations(annotationGlobals, partialEvaluator, task, newAnnotations, imagePromises);
+                });
               }
             }
             const dataPromises = Promise.all([contentStreamPromise, resourcesPromise]);
@@ -3211,6 +3325,18 @@
             });
             return Promise.all([pageListPromise, this._parsedAnnotations, newAnnotationsPromise]).then(function ([pageOpList, annotations, newAnnotations]) {
               if (newAnnotations) {
+                annotations = annotations.filter(a => !(a.ref && deletedAnnotations.has(a.ref)));
+                for (let i = 0, ii = newAnnotations.length; i < ii; i++) {
+                  const newAnnotation = newAnnotations[i];
+                  if (newAnnotation.refToReplace) {
+                    const j = annotations.findIndex(a => a.ref && (0, _primitives.isRefsEqual)(a.ref, newAnnotation.refToReplace));
+                    if (j >= 0) {
+                      annotations.splice(j, 1, newAnnotation);
+                      newAnnotations.splice(i--, 1);
+                      ii--;
+                    }
+                  }
+                }
                 annotations = annotations.concat(newAnnotations);
               }
               if (annotations.length === 0 || intent & _util.RenderingIntentFlag.ANNOTATIONS_DISABLE) {
@@ -3225,7 +3351,7 @@
                 intentPrint = !!(intent & _util.RenderingIntentFlag.PRINT);
               const opListPromises = [];
               for (const annotation of annotations) {
-                if (intentAny || intentDisplay && annotation.mustBeViewed(annotationStorage) || intentPrint && annotation.mustBePrinted(annotationStorage)) {
+                if (intentAny || intentDisplay && annotation.mustBeViewed(annotationStorage, renderForms) || intentPrint && annotation.mustBePrinted(annotationStorage)) {
                   opListPromises.push(annotation.getOperatorList(partialEvaluator, task, intent, renderForms, annotationStorage).catch(function (reason) {
                     (0, _util.warn)("getOperatorList - ignoring annotation data during " + `"${task.name}" task: "${reason}".`);
                     return {
@@ -3297,18 +3423,19 @@
             if (!structTreeRoot) {
               return null;
             }
+            await this._parsedAnnotations;
             const structTree = await this.pdfManager.ensure(this, "_parseStructTree", [structTreeRoot]);
             return structTree.serializable;
           }
           _parseStructTree(structTreeRoot) {
             const tree = new _struct_tree.StructTreePage(structTreeRoot, this.pageDict);
-            tree.parse();
+            tree.parse(this.ref);
             return tree;
           }
           async getAnnotationsData(handler, task, intent) {
             const annotations = await this._parsedAnnotations;
             if (annotations.length === 0) {
-              return [];
+              return annotations;
             }
             const annotationsData = [],
               textContentPromises = [];
@@ -3347,37 +3474,39 @@
             return (0, _util.shadow)(this, "annotations", Array.isArray(annots) ? annots : []);
           }
           get _parsedAnnotations() {
-            const parsedAnnotations = this.pdfManager.ensure(this, "annotations").then(() => {
+            const promise = this.pdfManager.ensure(this, "annotations").then(async annots => {
+              if (annots.length === 0) {
+                return annots;
+              }
+              const annotationGlobals = await this.pdfManager.ensureDoc("annotationGlobals");
+              if (!annotationGlobals) {
+                return [];
+              }
               const annotationPromises = [];
-              for (const annotationRef of this.annotations) {
-                annotationPromises.push(_annotation.AnnotationFactory.create(this.xref, annotationRef, this.pdfManager, this._localIdFactory, false).catch(function (reason) {
+              for (const annotationRef of annots) {
+                annotationPromises.push(_annotation.AnnotationFactory.create(this.xref, annotationRef, annotationGlobals, this._localIdFactory, false, this.ref).catch(function (reason) {
                   (0, _util.warn)(`_parsedAnnotations: "${reason}".`);
                   return null;
                 }));
               }
-              return Promise.all(annotationPromises).then(function (annotations) {
-                if (annotations.length === 0) {
-                  return annotations;
+              const sortedAnnotations = [];
+              let popupAnnotations;
+              for (const annotation of await Promise.all(annotationPromises)) {
+                if (!annotation) {
+                  continue;
                 }
-                const sortedAnnotations = [];
-                let popupAnnotations;
-                for (const annotation of annotations) {
-                  if (!annotation) {
-                    continue;
-                  }
-                  if (annotation instanceof _annotation.PopupAnnotation) {
-                    (popupAnnotations ||= []).push(annotation);
-                    continue;
-                  }
-                  sortedAnnotations.push(annotation);
+                if (annotation instanceof _annotation.PopupAnnotation) {
+                  (popupAnnotations ||= []).push(annotation);
+                  continue;
                 }
-                if (popupAnnotations) {
-                  sortedAnnotations.push(...popupAnnotations);
-                }
-                return sortedAnnotations;
-              });
+                sortedAnnotations.push(annotation);
+              }
+              if (popupAnnotations) {
+                sortedAnnotations.push(...popupAnnotations);
+              }
+              return sortedAnnotations;
             });
-            return (0, _util.shadow)(this, "_parsedAnnotations", parsedAnnotations);
+            return (0, _util.shadow)(this, "_parsedAnnotations", promise);
           }
           get jsActions() {
             const actions = (0, _core_utils.collectActions)(this.xref, this.pageDict, _util.PageActionEventType);
@@ -3628,7 +3757,7 @@
                   [key]: str
                 };
                 return (0, _util.shadow)(this, "xfaDatasets", new _dataset_reader.DatasetReader(data));
-              } catch (_) {
+              } catch {
                 (0, _util.warn)("XFA - Invalid utf-8 string.");
                 break;
               }
@@ -3647,7 +3776,7 @@
               }
               try {
                 data[key] = (0, _util.stringToUTF8String)(stream.getString());
-              } catch (_) {
+              } catch {
                 (0, _util.warn)("XFA - Invalid utf-8 string.");
                 return null;
               }
@@ -4093,27 +4222,22 @@
           async cleanup(manuallyTriggered = false) {
             return this.catalog ? this.catalog.cleanup(manuallyTriggered) : (0, _cleanup_helper.clearGlobalCaches)();
           }
-          _collectFieldObjects(name, fieldRef, promises) {
+          #collectFieldObjects(name, fieldRef, promises, annotationGlobals) {
             const field = this.xref.fetchIfRef(fieldRef);
             if (field.has("T")) {
               const partName = (0, _util.stringToPDFString)(field.get("T"));
-              if (name === "") {
-                name = partName;
-              } else {
-                name = `${name}.${partName}`;
-              }
+              name = name === "" ? partName : `${name}.${partName}`;
             }
             if (!promises.has(name)) {
               promises.set(name, []);
             }
-            promises.get(name).push(_annotation.AnnotationFactory.create(this.xref, fieldRef, this.pdfManager, this._localIdFactory, true).then(annotation => annotation?.getFieldObject()).catch(function (reason) {
-              (0, _util.warn)(`_collectFieldObjects: "${reason}".`);
+            promises.get(name).push(_annotation.AnnotationFactory.create(this.xref, fieldRef, annotationGlobals, this._localIdFactory, true, null).then(annotation => annotation?.getFieldObject()).catch(function (reason) {
+              (0, _util.warn)(`#collectFieldObjects: "${reason}".`);
               return null;
             }));
             if (field.has("Kids")) {
-              const kids = field.get("Kids");
-              for (const kid of kids) {
-                this._collectFieldObjects(name, kid, promises);
+              for (const kid of field.get("Kids")) {
+                this.#collectFieldObjects(name, kid, promises, annotationGlobals);
               }
             }
           }
@@ -4121,21 +4245,28 @@
             if (!this.formInfo.hasFields) {
               return (0, _util.shadow)(this, "fieldObjects", Promise.resolve(null));
             }
-            const allFields = Object.create(null);
-            const fieldPromises = new Map();
-            for (const fieldRef of this.catalog.acroForm.get("Fields")) {
-              this._collectFieldObjects("", fieldRef, fieldPromises);
-            }
-            const allPromises = [];
-            for (const [name, promises] of fieldPromises) {
-              allPromises.push(Promise.all(promises).then(fields => {
-                fields = fields.filter(field => !!field);
-                if (fields.length > 0) {
-                  allFields[name] = fields;
-                }
-              }));
-            }
-            return (0, _util.shadow)(this, "fieldObjects", Promise.all(allPromises).then(() => allFields));
+            const promise = this.pdfManager.ensureDoc("annotationGlobals").then(async annotationGlobals => {
+              if (!annotationGlobals) {
+                return null;
+              }
+              const allFields = Object.create(null);
+              const fieldPromises = new Map();
+              for (const fieldRef of this.catalog.acroForm.get("Fields")) {
+                this.#collectFieldObjects("", fieldRef, fieldPromises, annotationGlobals);
+              }
+              const allPromises = [];
+              for (const [name, promises] of fieldPromises) {
+                allPromises.push(Promise.all(promises).then(fields => {
+                  fields = fields.filter(field => !!field);
+                  if (fields.length > 0) {
+                    allFields[name] = fields;
+                  }
+                }));
+              }
+              await Promise.all(allPromises);
+              return allFields;
+            });
+            return (0, _util.shadow)(this, "fieldObjects", promise);
           }
           get hasJSActions() {
             const promise = this.pdfManager.ensureDoc("_parseHasJSActions");
@@ -4171,6 +4302,9 @@
             }
             return (0, _util.shadow)(this, "calculationOrderIds", ids);
           }
+          get annotationGlobals() {
+            return (0, _util.shadow)(this, "annotationGlobals", _annotation.AnnotationFactory.createGlobals(this.pdfManager));
+          }
         }
         exports.PDFDocument = PDFDocument;
 
@@ -4190,43 +4324,61 @@
         var _core_utils = __w_pdfjs_require__(3);
         var _default_appearance = __w_pdfjs_require__(11);
         var _primitives = __w_pdfjs_require__(4);
-        var _writer = __w_pdfjs_require__(66);
+        var _stream = __w_pdfjs_require__(8);
         var _base_stream = __w_pdfjs_require__(5);
         var _bidi = __w_pdfjs_require__(60);
-        var _catalog = __w_pdfjs_require__(70);
+        var _catalog = __w_pdfjs_require__(66);
         var _colorspace = __w_pdfjs_require__(12);
-        var _file_spec = __w_pdfjs_require__(73);
+        var _file_spec = __w_pdfjs_require__(69);
+        var _jpeg_stream = __w_pdfjs_require__(26);
         var _object_loader = __w_pdfjs_require__(76);
         var _operator_list = __w_pdfjs_require__(64);
-        var _stream = __w_pdfjs_require__(8);
+        var _writer = __w_pdfjs_require__(73);
         var _factory = __w_pdfjs_require__(77);
         class AnnotationFactory {
-          static create(xref, ref, pdfManager, idFactory, collectFields) {
-            return Promise.all([pdfManager.ensureCatalog("acroForm"), pdfManager.ensureCatalog("baseUrl"), pdfManager.ensureCatalog("attachments"), pdfManager.ensureDoc("xfaDatasets"), collectFields ? this._getPageIndex(xref, ref, pdfManager) : -1]).then(([acroForm, baseUrl, attachments, xfaDatasets, pageIndex]) => pdfManager.ensure(this, "_create", [xref, ref, pdfManager, idFactory, acroForm, attachments, xfaDatasets, collectFields, pageIndex]));
+          static createGlobals(pdfManager) {
+            return Promise.all([pdfManager.ensureCatalog("acroForm"), pdfManager.ensureDoc("xfaDatasets"), pdfManager.ensureCatalog("structTreeRoot"), pdfManager.ensureCatalog("baseUrl"), pdfManager.ensureCatalog("attachments")]).then(([acroForm, xfaDatasets, structTreeRoot, baseUrl, attachments]) => {
+              return {
+                pdfManager,
+                acroForm: acroForm instanceof _primitives.Dict ? acroForm : _primitives.Dict.empty,
+                xfaDatasets,
+                structTreeRoot,
+                baseUrl,
+                attachments
+              };
+            }, reason => {
+              (0, _util.warn)(`createGlobals: "${reason}".`);
+              return null;
+            });
           }
-          static _create(xref, ref, pdfManager, idFactory, acroForm, attachments = null, xfaDatasets, collectFields, pageIndex = -1) {
+          static async create(xref, ref, annotationGlobals, idFactory, collectFields, pageRef) {
+            const pageIndex = collectFields ? await this._getPageIndex(xref, ref, annotationGlobals.pdfManager) : null;
+            return annotationGlobals.pdfManager.ensure(this, "_create", [xref, ref, annotationGlobals, idFactory, collectFields, pageIndex, pageRef]);
+          }
+          static _create(xref, ref, annotationGlobals, idFactory, collectFields = false, pageIndex = null, pageRef = null) {
             const dict = xref.fetchIfRef(ref);
             if (!(dict instanceof _primitives.Dict)) {
               return undefined;
             }
+            const {
+              acroForm,
+              pdfManager
+            } = annotationGlobals;
             const id = ref instanceof _primitives.Ref ? ref.toString() : `annot_${idFactory.createObjId()}`;
             let subtype = dict.get("Subtype");
             subtype = subtype instanceof _primitives.Name ? subtype.name : null;
-            const acroFormDict = acroForm instanceof _primitives.Dict ? acroForm : _primitives.Dict.empty;
             const parameters = {
               xref,
               ref,
               dict,
               subtype,
               id,
-              pdfManager,
-              acroForm: acroFormDict,
-              attachments,
-              xfaDatasets,
+              annotationGlobals,
               collectFields,
-              needAppearances: !collectFields && acroFormDict.get("NeedAppearances") === true,
+              needAppearances: !collectFields && acroForm.get("NeedAppearances") === true,
               pageIndex,
-              isOffscreenCanvasSupported: pdfManager.evaluatorOptions.isOffscreenCanvasSupported
+              evaluatorOptions: pdfManager.evaluatorOptions,
+              pageRef
             };
             switch (subtype) {
               case "Link":
@@ -4299,22 +4451,62 @@
                 return -1;
               }
               const pageRef = annotDict.getRaw("P");
-              if (!(pageRef instanceof _primitives.Ref)) {
+              if (pageRef instanceof _primitives.Ref) {
+                try {
+                  const pageIndex = await pdfManager.ensureCatalog("getPageIndex", [pageRef]);
+                  return pageIndex;
+                } catch (ex) {
+                  (0, _util.info)(`_getPageIndex -- not a valid page reference: "${ex}".`);
+                }
+              }
+              if (annotDict.has("Kids")) {
                 return -1;
               }
-              const pageIndex = await pdfManager.ensureCatalog("getPageIndex", [pageRef]);
-              return pageIndex;
+              const numPages = await pdfManager.ensureDoc("numPages");
+              for (let pageIndex = 0; pageIndex < numPages; pageIndex++) {
+                const page = await pdfManager.getPage(pageIndex);
+                const annotations = await pdfManager.ensure(page, "annotations");
+                for (const annotRef of annotations) {
+                  if (annotRef instanceof _primitives.Ref && (0, _primitives.isRefsEqual)(annotRef, ref)) {
+                    return pageIndex;
+                  }
+                }
+              }
             } catch (ex) {
               (0, _util.warn)(`_getPageIndex: "${ex}".`);
-              return -1;
             }
+            return -1;
           }
-          static async saveNewAnnotations(evaluator, task, annotations) {
+          static generateImages(annotations, xref, isOffscreenCanvasSupported) {
+            if (!isOffscreenCanvasSupported) {
+              (0, _util.warn)("generateImages: OffscreenCanvas is not supported, cannot save or print some annotations with images.");
+              return null;
+            }
+            let imagePromises;
+            for (const {
+              bitmapId,
+              bitmap
+            } of annotations) {
+              if (!bitmap) {
+                continue;
+              }
+              imagePromises ||= new Map();
+              imagePromises.set(bitmapId, StampAnnotation.createImage(bitmap, xref));
+            }
+            return imagePromises;
+          }
+          static async saveNewAnnotations(evaluator, task, annotations, imagePromises) {
             const xref = evaluator.xref;
             let baseFontRef;
             const dependencies = [];
             const promises = [];
+            const {
+              isOffscreenCanvasSupported
+            } = evaluator.options;
             for (const annotation of annotations) {
+              if (annotation.deleted) {
+                continue;
+              }
               switch (annotation.annotationType) {
                 case _util.AnnotationEditorType.FREETEXT:
                   if (!baseFontRef) {
@@ -4325,7 +4517,7 @@
                     baseFont.set("Encoding", _primitives.Name.get("WinAnsiEncoding"));
                     const buffer = [];
                     baseFontRef = xref.getNewTemporaryRef();
-                    await (0, _writer.writeObject)(baseFontRef, baseFont, buffer, null);
+                    await (0, _writer.writeObject)(baseFontRef, baseFont, buffer, xref);
                     dependencies.push({
                       ref: baseFontRef,
                       data: buffer.join("")
@@ -4339,6 +4531,40 @@
                   break;
                 case _util.AnnotationEditorType.INK:
                   promises.push(InkAnnotation.createNewAnnotation(xref, annotation, dependencies));
+                  break;
+                case _util.AnnotationEditorType.STAMP:
+                  if (!isOffscreenCanvasSupported) {
+                    break;
+                  }
+                  const image = await imagePromises.get(annotation.bitmapId);
+                  if (image.imageStream) {
+                    const {
+                      imageStream,
+                      smaskStream
+                    } = image;
+                    const buffer = [];
+                    if (smaskStream) {
+                      const smaskRef = xref.getNewTemporaryRef();
+                      await (0, _writer.writeObject)(smaskRef, smaskStream, buffer, xref);
+                      dependencies.push({
+                        ref: smaskRef,
+                        data: buffer.join("")
+                      });
+                      imageStream.dict.set("SMask", smaskRef);
+                      buffer.length = 0;
+                    }
+                    const imageRef = image.imageRef = xref.getNewTemporaryRef();
+                    await (0, _writer.writeObject)(imageRef, imageStream, buffer, xref);
+                    dependencies.push({
+                      ref: imageRef,
+                      data: buffer.join("")
+                    });
+                    image.imageStream = image.smaskStream = null;
+                  }
+                  promises.push(StampAnnotation.createNewAnnotation(xref, annotation, dependencies, {
+                    image
+                  }));
+                  break;
               }
             }
             return {
@@ -4346,27 +4572,51 @@
               dependencies
             };
           }
-          static async printNewAnnotations(evaluator, task, annotations) {
+          static async printNewAnnotations(annotationGlobals, evaluator, task, annotations, imagePromises) {
             if (!annotations) {
               return null;
             }
-            const xref = evaluator.xref;
             const {
-              isOffscreenCanvasSupported
-            } = evaluator.options;
+              options,
+              xref
+            } = evaluator;
             const promises = [];
             for (const annotation of annotations) {
+              if (annotation.deleted) {
+                continue;
+              }
               switch (annotation.annotationType) {
                 case _util.AnnotationEditorType.FREETEXT:
-                  promises.push(FreeTextAnnotation.createNewPrintAnnotation(xref, annotation, {
+                  promises.push(FreeTextAnnotation.createNewPrintAnnotation(annotationGlobals, xref, annotation, {
                     evaluator,
                     task,
-                    isOffscreenCanvasSupported
+                    evaluatorOptions: options
                   }));
                   break;
                 case _util.AnnotationEditorType.INK:
-                  promises.push(InkAnnotation.createNewPrintAnnotation(xref, annotation, {
-                    isOffscreenCanvasSupported
+                  promises.push(InkAnnotation.createNewPrintAnnotation(annotationGlobals, xref, annotation, {
+                    evaluatorOptions: options
+                  }));
+                  break;
+                case _util.AnnotationEditorType.STAMP:
+                  if (!options.isOffscreenCanvasSupported) {
+                    break;
+                  }
+                  const image = await imagePromises.get(annotation.bitmapId);
+                  if (image.imageStream) {
+                    const {
+                      imageStream,
+                      smaskStream
+                    } = image;
+                    if (smaskStream) {
+                      imageStream.dict.set("SMask", smaskStream);
+                    }
+                    image.imageRef = new _jpeg_stream.JpegStream(imageStream, imageStream.length);
+                    image.imageStream = image.smaskStream = null;
+                  }
+                  promises.push(StampAnnotation.createNewPrintAnnotation(annotationGlobals, xref, annotation, {
+                    image,
+                    evaluatorOptions: options
                   }));
                   break;
               }
@@ -4450,7 +4700,8 @@
           constructor(params) {
             const {
               dict,
-              xref
+              xref,
+              annotationGlobals
             } = params;
             this.setTitle(dict.get("T"));
             this.setContents(dict.get("Contents"));
@@ -4463,13 +4714,19 @@
             this.setOptionalContent(dict);
             const MK = dict.get("MK");
             this.setBorderAndBackgroundColors(MK);
-            this.setRotation(MK);
+            this.setRotation(MK, dict);
+            this.ref = params.ref instanceof _primitives.Ref ? params.ref : null;
             this._streams = [];
             if (this.appearance) {
               this._streams.push(this.appearance);
             }
             const isLocked = !!(this.flags & _util.AnnotationFlag.LOCKED);
             const isContentLocked = !!(this.flags & _util.AnnotationFlag.LOCKEDCONTENTS);
+            if (annotationGlobals.structTreeRoot) {
+              let structParent = dict.get("StructParent");
+              structParent = Number.isInteger(structParent) && structParent >= 0 ? structParent : -1;
+              annotationGlobals.structTreeRoot.addAnnotationIdToPage(params.pageRef, structParent);
+            }
             this.data = {
               annotationFlags: this.flags,
               borderStyle: this.borderStyle,
@@ -4504,7 +4761,7 @@
               this.data.fieldName = this._constructFieldName(dict);
               this.data.pageIndex = params.pageIndex;
             }
-            this._isOffscreenCanvasSupported = params.isOffscreenCanvasSupported;
+            this._isOffscreenCanvasSupported = params.evaluatorOptions.isOffscreenCanvasSupported;
             this._fallbackFontDict = null;
             this._needAppearances = false;
           }
@@ -4515,19 +4772,19 @@
             return !this._hasFlag(flags, _util.AnnotationFlag.INVISIBLE) && !this._hasFlag(flags, _util.AnnotationFlag.NOVIEW);
           }
           _isPrintable(flags) {
-            return this._hasFlag(flags, _util.AnnotationFlag.PRINT) && !this._hasFlag(flags, _util.AnnotationFlag.INVISIBLE);
+            return this._hasFlag(flags, _util.AnnotationFlag.PRINT) && !this._hasFlag(flags, _util.AnnotationFlag.HIDDEN) && !this._hasFlag(flags, _util.AnnotationFlag.INVISIBLE);
           }
-          mustBeViewed(annotationStorage) {
-            const hidden = annotationStorage?.get(this.data.id)?.hidden;
-            if (hidden !== undefined) {
-              return !hidden;
+          mustBeViewed(annotationStorage, _renderForms) {
+            const noView = annotationStorage?.get(this.data.id)?.noView;
+            if (noView !== undefined) {
+              return !noView;
             }
             return this.viewable && !this._hasFlag(this.flags, _util.AnnotationFlag.HIDDEN);
           }
           mustBePrinted(annotationStorage) {
-            const print = annotationStorage?.get(this.data.id)?.print;
-            if (print !== undefined) {
-              return print;
+            const noPrint = annotationStorage?.get(this.data.id)?.noPrint;
+            if (noPrint !== undefined) {
+              return !noPrint;
             }
             return this.printable;
           }
@@ -4558,10 +4815,14 @@
             };
           }
           setDefaultAppearance(params) {
+            const {
+              dict,
+              annotationGlobals
+            } = params;
             const defaultAppearance = (0, _core_utils.getInheritableProperty)({
-              dict: params.dict,
+              dict,
               key: "DA"
-            }) || params.acroForm.get("DA");
+            }) || annotationGlobals.acroForm.get("DA");
             this._defaultAppearance = typeof defaultAppearance === "string" ? defaultAppearance : "";
             this.data.defaultAppearanceData = (0, _default_appearance.parseDefaultAppearance)(this._defaultAppearance);
           }
@@ -4581,11 +4842,7 @@
             return this._hasFlag(this.flags, flag);
           }
           setRectangle(rectangle) {
-            if (Array.isArray(rectangle) && rectangle.length === 4) {
-              this.rectangle = _util.Util.normalizeRect(rectangle);
-            } else {
-              this.rectangle = [0, 0, 0, 0];
-            }
+            this.rectangle = Array.isArray(rectangle) && rectangle.length === 4 ? _util.Util.normalizeRect(rectangle) : [0, 0, 0, 0];
           }
           setColor(color) {
             this.color = getRgbColor(color);
@@ -4616,18 +4873,16 @@
               }
             }
           }
-          setRotation(mk) {
+          setRotation(mk, dict) {
             this.rotation = 0;
-            if (mk instanceof _primitives.Dict) {
-              let angle = mk.get("R") || 0;
-              if (Number.isInteger(angle) && angle !== 0) {
-                angle %= 360;
-                if (angle < 0) {
-                  angle += 360;
-                }
-                if (angle % 90 === 0) {
-                  this.rotation = angle;
-                }
+            let angle = mk instanceof _primitives.Dict ? mk.get("R") || 0 : dict.get("Rotate") || 0;
+            if (Number.isInteger(angle) && angle !== 0) {
+              angle %= 360;
+              if (angle < 0) {
+                angle += 360;
+              }
+              if (angle % 90 === 0) {
+                this.rotation = angle;
               }
             }
           }
@@ -4769,11 +5024,16 @@
             const resources = await this.loadResources(["ExtGState", "Font", "Properties", "XObject"], this.appearance);
             const text = [];
             const buffer = [];
+            let firstPosition = null;
             const sink = {
               desiredSize: Math.Infinity,
               ready: true,
               enqueue(chunk, size) {
                 for (const item of chunk.items) {
+                  if (item.str === undefined) {
+                    continue;
+                  }
+                  firstPosition ||= item.transform.slice(-2);
                   buffer.push(item.str);
                   if (item.hasEOL) {
                     text.push(buffer.join(""));
@@ -4794,7 +5054,17 @@
             if (buffer.length) {
               text.push(buffer.join(""));
             }
-            if (text.length > 0) {
+            if (text.length > 1 || text[0]) {
+              const appearanceDict = this.appearance.dict;
+              const bbox = appearanceDict.getArray("BBox") || [0, 0, 1, 1];
+              const matrix = appearanceDict.getArray("Matrix") || [1, 0, 0, 1, 0, 0];
+              const rect = this.data.rect;
+              const transform = getTransformMatrix(rect, bbox, matrix);
+              transform[4] -= rect[0];
+              transform[5] -= rect[1];
+              firstPosition = _util.Util.applyTransform(firstPosition, transform);
+              firstPosition = _util.Util.applyTransform(firstPosition, matrix);
+              this.data.textPosition = firstPosition;
               this.data.textContent = text;
             }
           }
@@ -4845,10 +5115,7 @@
                 visited.put(loopDict.objId);
               }
               if (loopDict.has("T")) {
-                const t = (0, _util.stringToPDFString)(loopDict.get("T"));
-                if (!t.startsWith("#")) {
-                  fieldName.unshift(t);
-                }
+                fieldName.unshift((0, _util.stringToPDFString)(loopDict.get("T")));
               }
             }
             return fieldName.join(".");
@@ -4953,6 +5220,7 @@
               const rt = dict.get("RT");
               this.data.replyType = rt instanceof _primitives.Name ? rt.name : _util.AnnotationReplyType.REPLY;
             }
+            let popupRef = null;
             if (this.data.replyType === _util.AnnotationReplyType.GROUP) {
               const parent = dict.get("IRT");
               this.setTitle(parent.get("T"));
@@ -4971,7 +5239,7 @@
                 this.setModificationDate(parent.get("M"));
                 this.data.modificationDate = this.modificationDate;
               }
-              this.data.hasPopup = parent.has("Popup");
+              popupRef = parent.getRaw("Popup");
               if (!parent.has("C")) {
                 this.data.color = null;
               } else {
@@ -4982,11 +5250,12 @@
               this.data.titleObj = this._title;
               this.setCreationDate(dict.get("CreationDate"));
               this.data.creationDate = this.creationDate;
-              this.data.hasPopup = dict.has("Popup");
+              popupRef = dict.getRaw("Popup");
               if (!dict.has("C")) {
                 this.data.color = null;
               }
             }
+            this.data.popupRef = popupRef instanceof _primitives.Ref ? popupRef.toString() : null;
             if (dict.has("RC")) {
               this.data.richText = _factory.XFAFactory.getRichTextAsHtml(dict.get("RC"));
             }
@@ -5072,7 +5341,7 @@
             this._streams.push(this.appearance, appearanceStream);
           }
           static async createNewAnnotation(xref, annotation, dependencies, params) {
-            const annotationRef = xref.getNewTemporaryRef();
+            const annotationRef = annotation.ref ||= xref.getNewTemporaryRef();
             const ap = await this.createNewAppearanceStream(annotation, xref, params);
             const buffer = [];
             let annotationDict;
@@ -5081,8 +5350,7 @@
               annotationDict = this.createNewDict(annotation, xref, {
                 apRef
               });
-              const transform = xref.encrypt ? xref.encrypt.createCipherTransform(apRef.num, apRef.gen) : null;
-              await (0, _writer.writeObject)(apRef, ap, buffer, transform);
+              await (0, _writer.writeObject)(apRef, ap, buffer, xref);
               dependencies.push({
                 ref: apRef,
                 data: buffer.join("")
@@ -5090,24 +5358,31 @@
             } else {
               annotationDict = this.createNewDict(annotation, xref, {});
             }
+            if (Number.isInteger(annotation.parentTreeId)) {
+              annotationDict.set("StructParent", annotation.parentTreeId);
+            }
             buffer.length = 0;
-            const transform = xref.encrypt ? xref.encrypt.createCipherTransform(annotationRef.num, annotationRef.gen) : null;
-            await (0, _writer.writeObject)(annotationRef, annotationDict, buffer, transform);
+            await (0, _writer.writeObject)(annotationRef, annotationDict, buffer, xref);
             return {
               ref: annotationRef,
               data: buffer.join("")
             };
           }
-          static async createNewPrintAnnotation(xref, annotation, params) {
+          static async createNewPrintAnnotation(annotationGlobals, xref, annotation, params) {
             const ap = await this.createNewAppearanceStream(annotation, xref, params);
             const annotationDict = this.createNewDict(annotation, xref, {
               ap
             });
-            return new this.prototype.constructor({
+            const newAnnotation = new this.prototype.constructor({
               dict: annotationDict,
               xref,
-              isOffscreenCanvasSupported: params.isOffscreenCanvasSupported
+              annotationGlobals,
+              evaluatorOptions: params.evaluatorOptions
             });
+            if (annotation.ref) {
+              newAnnotation.ref = newAnnotation.refToReplace = annotation.ref;
+            }
+            return newAnnotation;
           }
         }
         exports.MarkupAnnotation = MarkupAnnotation;
@@ -5116,10 +5391,10 @@
             super(params);
             const {
               dict,
-              xref
+              xref,
+              annotationGlobals
             } = params;
             const data = this.data;
-            this.ref = params.ref;
             this._needAppearances = params.needAppearances;
             data.annotationType = _util.AnnotationType.WIDGET;
             if (data.fieldName === undefined) {
@@ -5140,11 +5415,11 @@
               getArray: true
             });
             data.defaultFieldValue = this._decodeFormValue(defaultFieldValue);
-            if (fieldValue === undefined && params.xfaDatasets) {
+            if (fieldValue === undefined && annotationGlobals.xfaDatasets) {
               const path = this._title.str;
               if (path) {
                 this._hasValueFromXFA = true;
-                data.fieldValue = fieldValue = params.xfaDatasets.getValue(path);
+                data.fieldValue = fieldValue = annotationGlobals.xfaDatasets.getValue(path);
               }
             }
             if (fieldValue === undefined && data.defaultFieldValue !== null) {
@@ -5162,7 +5437,7 @@
               dict,
               key: "DR"
             });
-            const acroFormResources = params.acroForm.get("DR");
+            const acroFormResources = annotationGlobals.acroForm.get("DR");
             const appearanceResources = this.appearance?.dict.get("Resources");
             this._fieldResources = {
               localResources,
@@ -5183,7 +5458,7 @@
             }
             data.readOnly = this.hasFieldFlag(_util.AnnotationFieldFlag.READONLY);
             data.required = this.hasFieldFlag(_util.AnnotationFieldFlag.REQUIRED);
-            data.hidden = this._hasFlag(data.annotationFlags, _util.AnnotationFlag.HIDDEN);
+            data.hidden = this._hasFlag(data.annotationFlags, _util.AnnotationFlag.HIDDEN) || this._hasFlag(data.annotationFlags, _util.AnnotationFlag.NOVIEW);
           }
           _decodeFormValue(formValue) {
             if (Array.isArray(formValue)) {
@@ -5197,6 +5472,15 @@
           }
           hasFieldFlag(flag) {
             return !!(this.data.fieldFlags & flag);
+          }
+          _isViewable(flags) {
+            return !this._hasFlag(flags, _util.AnnotationFlag.INVISIBLE);
+          }
+          mustBeViewed(annotationStorage, renderForms) {
+            if (renderForms) {
+              return this.viewable;
+            }
+            return super.mustBeViewed(annotationStorage, renderForms) && !this._hasFlag(this.flags, _util.AnnotationFlag.NOVIEW);
           }
           getRotationMatrix(annotationStorage) {
             let rotation = annotationStorage?.get(this.data.id)?.rotation;
@@ -5254,6 +5538,7 @@
                 separateCanvas: false
               };
             }
+            const isUsingOwnCanvas = !!(this.data.hasOwnCanvas && intent & _util.RenderingIntentFlag.DISPLAY);
             const matrix = [1, 0, 0, 1, 0, 0];
             const bbox = [0, 0, this.data.rect[2] - this.data.rect[0], this.data.rect[3] - this.data.rect[1]];
             const transform = getTransformMatrix(this.data.rect, bbox, matrix);
@@ -5264,7 +5549,7 @@
             if (optionalContent !== undefined) {
               opList.addOp(_util.OPS.beginMarkedContentProps, ["OC", optionalContent]);
             }
-            opList.addOp(_util.OPS.beginAnnotation, [this.data.id, this.data.rect, transform, this.getRotationMatrix(annotationStorage), false]);
+            opList.addOp(_util.OPS.beginAnnotation, [this.data.id, this.data.rect, transform, this.getRotationMatrix(annotationStorage), isUsingOwnCanvas]);
             const stream = new _stream.StringStream(content);
             await evaluator.getOperatorList({
               stream,
@@ -5279,7 +5564,7 @@
             return {
               opList,
               separateForm: false,
-              separateCanvas: false
+              separateCanvas: isUsingOwnCanvas
             };
           }
           _getMKDict(rotation) {
@@ -5350,8 +5635,6 @@
             if (maybeMK) {
               dict.set("MK", maybeMK);
             }
-            const encrypt = xref.encrypt;
-            const originalTransform = encrypt ? encrypt.createCipherTransform(this.ref.num, this.ref.gen) : null;
             const buffer = [];
             const changes = [{
               ref: this.ref,
@@ -5364,10 +5647,6 @@
               const AP = new _primitives.Dict(xref);
               dict.set("AP", AP);
               AP.set("N", newRef);
-              let newTransform = null;
-              if (encrypt) {
-                newTransform = encrypt.createCipherTransform(newRef.num, newRef.gen);
-              }
               const resources = this._getSaveFieldResources(xref);
               const appearanceStream = new _stream.StringStream(appearance);
               const appearanceDict = appearanceStream.dict = new _primitives.Dict(xref);
@@ -5378,7 +5657,7 @@
               if (rotationMatrix !== _util.IDENTITY_MATRIX) {
                 appearanceDict.set("Matrix", rotationMatrix);
               }
-              await (0, _writer.writeObject)(newRef, appearanceStream, buffer, newTransform);
+              await (0, _writer.writeObject)(newRef, appearanceStream, buffer, xref);
               changes.push({
                 ref: newRef,
                 data: buffer.join(""),
@@ -5388,7 +5667,7 @@
               buffer.length = 0;
             }
             dict.set("M", `D:${(0, _util.getModificationDate)()}`);
-            await (0, _writer.writeObject)(this.ref, dict, buffer, originalTransform);
+            await (0, _writer.writeObject)(this.ref, dict, buffer, xref);
             changes[0].data = buffer.join("");
             return changes;
           }
@@ -5683,7 +5962,7 @@
             this.data.doNotScroll = this.hasFieldFlag(_util.AnnotationFieldFlag.DONOTSCROLL);
           }
           get hasTextContent() {
-            return !!this.appearance;
+            return !!this.appearance && !this._needAppearances;
           }
           _getCombAppearance(defaultAppearance, font, text, fontSize, width, height, hPadding, vPadding, descent, lineHeight, annotationStorage) {
             const combWidth = width / this.data.maxLen;
@@ -5746,22 +6025,20 @@
                   lastSpacePosInStringEnd = end;
                   lastSpacePos = i;
                 }
-              } else {
-                if (currentWidth + glyphWidth > width) {
-                  if (lastSpacePosInStringStart !== -1) {
-                    chunks.push(line.substring(startChunk, lastSpacePosInStringEnd));
-                    startChunk = lastSpacePosInStringEnd;
-                    i = lastSpacePos + 1;
-                    lastSpacePosInStringStart = -1;
-                    currentWidth = 0;
-                  } else {
-                    chunks.push(line.substring(startChunk, start));
-                    startChunk = start;
-                    currentWidth = glyphWidth;
-                  }
+              } else if (currentWidth + glyphWidth > width) {
+                if (lastSpacePosInStringStart !== -1) {
+                  chunks.push(line.substring(startChunk, lastSpacePosInStringEnd));
+                  startChunk = lastSpacePosInStringEnd;
+                  i = lastSpacePos + 1;
+                  lastSpacePosInStringStart = -1;
+                  currentWidth = 0;
                 } else {
-                  currentWidth += glyphWidth;
+                  chunks.push(line.substring(startChunk, start));
+                  startChunk = start;
+                  currentWidth = glyphWidth;
                 }
+              } else {
+                currentWidth += glyphWidth;
               }
             }
             if (startChunk < line.length) {
@@ -5826,11 +6103,7 @@
               return super.getOperatorList(evaluator, task, intent, renderForms, annotationStorage);
             }
             if (value === null || value === undefined) {
-              if (this.data.checkBox) {
-                value = this.data.fieldValue === this.data.exportValue;
-              } else {
-                value = this.data.fieldValue === this.data.buttonValue;
-              }
+              value = this.data.checkBox ? this.data.fieldValue === this.data.exportValue : this.data.fieldValue === this.data.buttonValue;
             }
             const appearance = value ? this.checkedAppearance : this.uncheckedAppearance;
             if (appearance) {
@@ -5898,14 +6171,8 @@
             if (maybeMK) {
               dict.set("MK", maybeMK);
             }
-            const encrypt = evaluator.xref.encrypt;
-            let originalTransform = null;
-            if (encrypt) {
-              originalTransform = encrypt.createCipherTransform(this.ref.num, this.ref.gen);
-            }
-            const buffer = [`${this.ref.num} ${this.ref.gen} obj\n`];
-            await (0, _writer.writeDict)(dict, buffer, originalTransform);
-            buffer.push("\nendobj\n");
+            const buffer = [];
+            await (0, _writer.writeObject)(this.ref, dict, buffer, evaluator.xref);
             return [{
               ref: this.ref,
               data: buffer.join(""),
@@ -5943,19 +6210,15 @@
               value: value ? this.data.buttonValue : ""
             };
             const name = _primitives.Name.get(value ? this.data.buttonValue : "Off");
-            let parentBuffer = null;
-            const encrypt = evaluator.xref.encrypt;
+            const buffer = [];
+            let parentData = null;
             if (value) {
               if (this.parent instanceof _primitives.Ref) {
                 const parent = evaluator.xref.fetch(this.parent);
-                let parentTransform = null;
-                if (encrypt) {
-                  parentTransform = encrypt.createCipherTransform(this.parent.num, this.parent.gen);
-                }
                 parent.set("V", name);
-                parentBuffer = [`${this.parent.num} ${this.parent.gen} obj\n`];
-                await (0, _writer.writeDict)(parent, parentBuffer, parentTransform);
-                parentBuffer.push("\nendobj\n");
+                await (0, _writer.writeObject)(this.parent, parent, buffer, evaluator.xref);
+                parentData = buffer.join("");
+                buffer.length = 0;
               } else if (this.parent instanceof _primitives.Dict) {
                 this.parent.set("V", name);
               }
@@ -5966,22 +6229,16 @@
             if (maybeMK) {
               dict.set("MK", maybeMK);
             }
-            let originalTransform = null;
-            if (encrypt) {
-              originalTransform = encrypt.createCipherTransform(this.ref.num, this.ref.gen);
-            }
-            const buffer = [`${this.ref.num} ${this.ref.gen} obj\n`];
-            await (0, _writer.writeDict)(dict, buffer, originalTransform);
-            buffer.push("\nendobj\n");
+            await (0, _writer.writeObject)(this.ref, dict, buffer, evaluator.xref);
             const newRefs = [{
               ref: this.ref,
               data: buffer.join(""),
               xfa
             }];
-            if (parentBuffer !== null) {
+            if (parentData) {
               newRefs.push({
                 ref: this.parent,
-                data: parentBuffer.join(""),
+                data: parentData,
                 xfa: null
               });
             }
@@ -6076,6 +6333,9 @@
               this._streams.push(this.uncheckedAppearance);
             }
             this._fallbackFontDict = this.fallbackFontDict;
+            if (this.data.defaultFieldValue === null) {
+              this.data.defaultFieldValue = "Off";
+            }
           }
           _processRadioButton(params) {
             this.data.fieldValue = this.data.buttonValue = null;
@@ -6114,18 +6374,25 @@
               this._streams.push(this.uncheckedAppearance);
             }
             this._fallbackFontDict = this.fallbackFontDict;
+            if (this.data.defaultFieldValue === null) {
+              this.data.defaultFieldValue = "Off";
+            }
           }
           _processPushButton(params) {
-            if (!params.dict.has("A") && !params.dict.has("AA") && !this.data.alternativeText) {
+            const {
+              dict,
+              annotationGlobals
+            } = params;
+            if (!dict.has("A") && !dict.has("AA") && !this.data.alternativeText) {
               (0, _util.warn)("Push buttons without action dictionaries are not supported");
               return;
             }
-            this.data.isTooltipOnly = !params.dict.has("A") && !params.dict.has("AA");
+            this.data.isTooltipOnly = !dict.has("A") && !dict.has("AA");
             _catalog.Catalog.parseDestDictionary({
-              destDict: params.dict,
+              destDict: dict,
               resultObj: this.data,
-              docBaseUrl: params.pdfManager.docBaseUrl,
-              docAttachments: params.attachments
+              docBaseUrl: annotationGlobals.baseUrl,
+              docAttachments: annotationGlobals.attachments
             });
           }
           getFieldObject() {
@@ -6312,13 +6579,14 @@
             const lineHeight = fontSize * _util.LINE_FACTOR;
             const vPadding = (lineHeight - fontSize) / 2;
             const numberOfVisibleLines = Math.floor(totalHeight / lineHeight);
-            let firstIndex;
-            if (valueIndices.length === 1) {
-              const valuePosition = valueIndices[0];
-              const indexInPage = valuePosition % numberOfVisibleLines;
-              firstIndex = valuePosition - indexInPage;
-            } else {
-              firstIndex = valueIndices.length ? valueIndices[0] : 0;
+            let firstIndex = 0;
+            if (valueIndices.length > 0) {
+              const minIndex = Math.min(...valueIndices);
+              const maxIndex = Math.max(...valueIndices);
+              firstIndex = Math.max(0, maxIndex - numberOfVisibleLines + 1);
+              if (firstIndex > minIndex) {
+                firstIndex = minIndex;
+              }
             }
             const end = Math.min(firstIndex + numberOfVisibleLines + 1, lineCount);
             const buf = ["/Tx BMC q", `1 1 ${totalWidth} ${totalHeight} re W n`];
@@ -6389,17 +6657,21 @@
         class LinkAnnotation extends Annotation {
           constructor(params) {
             super(params);
+            const {
+              dict,
+              annotationGlobals
+            } = params;
             this.data.annotationType = _util.AnnotationType.LINK;
-            const quadPoints = getQuadPoints(params.dict, this.rectangle);
+            const quadPoints = getQuadPoints(dict, this.rectangle);
             if (quadPoints) {
               this.data.quadPoints = quadPoints;
             }
             this.data.borderColor ||= this.data.color;
             _catalog.Catalog.parseDestDictionary({
-              destDict: params.dict,
+              destDict: dict,
               resultObj: this.data,
-              docBaseUrl: params.pdfManager.docBaseUrl,
-              docAttachments: params.attachments
+              docBaseUrl: annotationGlobals.baseUrl,
+              docAttachments: annotationGlobals.attachments
             });
           }
         }
@@ -6410,21 +6682,16 @@
               dict
             } = params;
             this.data.annotationType = _util.AnnotationType.POPUP;
+            if (this.data.rect[0] === this.data.rect[2] || this.data.rect[1] === this.data.rect[3]) {
+              this.data.rect = null;
+            }
             let parentItem = dict.get("Parent");
             if (!parentItem) {
               (0, _util.warn)("Popup annotation has a missing or invalid parent annotation.");
               return;
             }
-            const parentSubtype = parentItem.get("Subtype");
-            this.data.parentType = parentSubtype instanceof _primitives.Name ? parentSubtype.name : null;
-            const rawParent = dict.getRaw("Parent");
-            this.data.parentId = rawParent instanceof _primitives.Ref ? rawParent.toString() : null;
             const parentRect = parentItem.getArray("Rect");
-            if (Array.isArray(parentRect) && parentRect.length === 4) {
-              this.data.parentRect = _util.Util.normalizeRect(parentRect);
-            } else {
-              this.data.parentRect = [0, 0, 0, 0];
-            }
+            this.data.parentRect = Array.isArray(parentRect) && parentRect.length === 4 ? _util.Util.normalizeRect(parentRect) : null;
             const rt = parentItem.get("RT");
             if ((0, _primitives.isName)(rt, _util.AnnotationReplyType.GROUP)) {
               parentItem = parentItem.get("IRT");
@@ -6454,25 +6721,38 @@
             if (parentItem.has("RC")) {
               this.data.richText = _factory.XFAFactory.getRichTextAsHtml(parentItem.get("RC"));
             }
+            this.data.open = !!dict.get("Open");
           }
         }
         exports.PopupAnnotation = PopupAnnotation;
         class FreeTextAnnotation extends MarkupAnnotation {
           constructor(params) {
             super(params);
-            this.data.hasOwnCanvas = this.data.noRotate;
+            this.data.hasOwnCanvas = true;
             const {
+              evaluatorOptions,
               xref
             } = params;
             this.data.annotationType = _util.AnnotationType.FREETEXT;
             this.setDefaultAppearance(params);
-            if (!this.appearance && this._isOffscreenCanvasSupported) {
+            if (this.appearance) {
+              const {
+                fontColor,
+                fontSize
+              } = (0, _default_appearance.parseAppearanceStream)(this.appearance, evaluatorOptions, xref);
+              this.data.defaultAppearanceData.fontColor = fontColor;
+              this.data.defaultAppearanceData.fontSize = fontSize || 10;
+            } else if (this._isOffscreenCanvasSupported) {
               const strokeAlpha = params.dict.get("CA");
               const fakeUnicodeFont = new _default_appearance.FakeUnicodeFont(xref, "sans-serif");
-              const fontData = this.data.defaultAppearanceData;
-              this.appearance = fakeUnicodeFont.createAppearance(this._contents.str, this.rectangle, this.rotation, fontData.fontSize || 10, fontData.fontColor, strokeAlpha);
+              this.data.defaultAppearanceData.fontSize ||= 10;
+              const {
+                fontColor,
+                fontSize
+              } = this.data.defaultAppearanceData;
+              this.appearance = fakeUnicodeFont.createAppearance(this._contents.str, this.rectangle, this.rotation, fontSize, fontColor, strokeAlpha);
               this._streams.push(this.appearance, _default_appearance.FakeUnicodeFont.toUnicodeStream);
-            } else if (!this._isOffscreenCanvasSupported) {
+            } else {
               (0, _util.warn)("FreeTextAnnotation: OffscreenCanvas is not supported, annotation may not render correctly.");
             }
           }
@@ -6543,7 +6823,7 @@
             }
             resources.set("Font", font);
             const helv = await WidgetAnnotation._getFontData(evaluator, task, {
-              fontName: "Helvetica",
+              fontName: "Helv",
               fontSize
             }, resources);
             const [x1, y1, x2, y2] = rect;
@@ -6576,16 +6856,41 @@
             }
             let vscale = 1;
             const lineHeight = _util.LINE_FACTOR * fontSize;
-            const lineDescent = _util.LINE_DESCENT_FACTOR * fontSize;
+            const lineAscent = (_util.LINE_FACTOR - _util.LINE_DESCENT_FACTOR) * fontSize;
             const totalHeight = lineHeight * lines.length;
             if (totalHeight > h) {
               vscale = h / totalHeight;
             }
             const fscale = Math.min(hscale, vscale);
             const newFontSize = fontSize * fscale;
-            const buffer = ["q", `0 0 ${(0, _core_utils.numberToString)(w)} ${(0, _core_utils.numberToString)(h)} re W n`, `BT`, `1 0 0 1 0 ${(0, _core_utils.numberToString)(h + lineDescent)} Tm 0 Tc ${(0, _default_appearance.getPdfColor)(color, true)}`, `/Helv ${(0, _core_utils.numberToString)(newFontSize)} Tf`];
+            let firstPoint, clipBox, matrix;
+            switch (rotation) {
+              case 0:
+                matrix = [1, 0, 0, 1];
+                clipBox = [rect[0], rect[1], w, h];
+                firstPoint = [rect[0], rect[3] - lineAscent];
+                break;
+              case 90:
+                matrix = [0, 1, -1, 0];
+                clipBox = [rect[1], -rect[2], w, h];
+                firstPoint = [rect[1], -rect[0] - lineAscent];
+                break;
+              case 180:
+                matrix = [-1, 0, 0, -1];
+                clipBox = [-rect[2], -rect[3], w, h];
+                firstPoint = [-rect[2], -rect[1] - lineAscent];
+                break;
+              case 270:
+                matrix = [0, -1, 1, 0];
+                clipBox = [-rect[3], rect[0], w, h];
+                firstPoint = [-rect[3], rect[2] - lineAscent];
+                break;
+            }
+            const buffer = ["q", `${matrix.join(" ")} 0 0 cm`, `${clipBox.join(" ")} re W n`, `BT`, `${(0, _default_appearance.getPdfColor)(color, true)}`, `0 Tc /Helv ${(0, _core_utils.numberToString)(newFontSize)} Tf`];
+            buffer.push(`${firstPoint.join(" ")} Td (${(0, _core_utils.escapeString)(encodedLines[0])}) Tj`);
             const vShift = (0, _core_utils.numberToString)(lineHeight);
-            for (const line of encodedLines) {
+            for (let i = 1, ii = encodedLines.length; i < ii; i++) {
+              const line = encodedLines[i];
               buffer.push(`0 -${vShift} Td (${(0, _core_utils.escapeString)(line)}) Tj`);
             }
             buffer.push("ET", "Q");
@@ -6594,12 +6899,9 @@
             appearanceStreamDict.set("FormType", 1);
             appearanceStreamDict.set("Subtype", _primitives.Name.get("Form"));
             appearanceStreamDict.set("Type", _primitives.Name.get("XObject"));
-            appearanceStreamDict.set("BBox", [0, 0, w, h]);
+            appearanceStreamDict.set("BBox", rect);
             appearanceStreamDict.set("Resources", resources);
-            if (rotation) {
-              const matrix = (0, _core_utils.getRotationMatrix)(rotation, w, h);
-              appearanceStreamDict.set("Matrix", matrix);
-            }
+            appearanceStreamDict.set("Matrix", [1, 0, 0, 1, -rect[0], -rect[1]]);
             const ap = new _stream.StringStream(appearance);
             ap.dict = appearanceStreamDict;
             return ap;
@@ -6863,9 +7165,12 @@
             ap
           }) {
             const {
+              color,
+              opacity,
               paths,
               rect,
-              rotation
+              rotation,
+              thickness
             } = annotation;
             const ink = new _primitives.Dict(xref);
             ink.set("Type", _primitives.Name.get("Annot"));
@@ -6874,8 +7179,12 @@
             ink.set("Rect", rect);
             ink.set("InkList", paths.map(p => p.points));
             ink.set("F", 4);
-            ink.set("Border", [0, 0, 0]);
             ink.set("Rotate", rotation);
+            const bs = new _primitives.Dict(xref);
+            ink.set("BS", bs);
+            bs.set("W", thickness);
+            ink.set("C", Array.from(color, c => c / 255));
+            ink.set("CA", opacity);
             const n = new _primitives.Dict(xref);
             ink.set("AP", n);
             if (apRef) {
@@ -6889,17 +7198,10 @@
             const {
               color,
               rect,
-              rotation,
               paths,
               thickness,
               opacity
             } = annotation;
-            const [x1, y1, x2, y2] = rect;
-            let w = x2 - x1;
-            let h = y2 - y1;
-            if (rotation % 180 !== 0) {
-              [w, h] = [h, w];
-            }
             const appearanceBuffer = [`${thickness} w 1 J 1 j`, `${(0, _default_appearance.getPdfColor)(color, false)}`];
             if (opacity !== 1) {
               appearanceBuffer.push("/R0 gs");
@@ -6922,12 +7224,8 @@
             appearanceStreamDict.set("FormType", 1);
             appearanceStreamDict.set("Subtype", _primitives.Name.get("Form"));
             appearanceStreamDict.set("Type", _primitives.Name.get("XObject"));
-            appearanceStreamDict.set("BBox", [0, 0, w, h]);
+            appearanceStreamDict.set("BBox", rect);
             appearanceStreamDict.set("Length", appearance.length);
-            if (rotation) {
-              const matrix = (0, _core_utils.getRotationMatrix)(rotation, w, h);
-              appearanceStreamDict.set("Matrix", matrix);
-            }
             if (opacity !== 1) {
               const resources = new _primitives.Dict(xref);
               const extGState = new _primitives.Dict(xref);
@@ -6972,7 +7270,7 @@
                 });
               }
             } else {
-              this.data.hasPopup = false;
+              this.data.popupRef = null;
             }
           }
         }
@@ -7001,7 +7299,7 @@
                 });
               }
             } else {
-              this.data.hasPopup = false;
+              this.data.popupRef = null;
             }
           }
         }
@@ -7041,7 +7339,7 @@
                 });
               }
             } else {
-              this.data.hasPopup = false;
+              this.data.popupRef = null;
             }
           }
         }
@@ -7070,7 +7368,7 @@
                 });
               }
             } else {
-              this.data.hasPopup = false;
+              this.data.popupRef = null;
             }
           }
         }
@@ -7079,6 +7377,129 @@
             super(params);
             this.data.annotationType = _util.AnnotationType.STAMP;
             this.data.hasOwnCanvas = this.data.noRotate;
+          }
+          static async createImage(bitmap, xref) {
+            const {
+              width,
+              height
+            } = bitmap;
+            const canvas = new OffscreenCanvas(width, height);
+            const ctx = canvas.getContext("2d", {
+              alpha: true
+            });
+            ctx.drawImage(bitmap, 0, 0);
+            const data = ctx.getImageData(0, 0, width, height).data;
+            const buf32 = new Uint32Array(data.buffer);
+            const hasAlpha = buf32.some(_util.FeatureTest.isLittleEndian ? x => x >>> 24 !== 0xff : x => (x & 0xff) !== 0xff);
+            if (hasAlpha) {
+              ctx.fillStyle = "white";
+              ctx.fillRect(0, 0, width, height);
+              ctx.drawImage(bitmap, 0, 0);
+            }
+            const jpegBufferPromise = canvas.convertToBlob({
+              type: "image/jpeg",
+              quality: 1
+            }).then(blob => {
+              return blob.arrayBuffer();
+            });
+            const xobjectName = _primitives.Name.get("XObject");
+            const imageName = _primitives.Name.get("Image");
+            const image = new _primitives.Dict(xref);
+            image.set("Type", xobjectName);
+            image.set("Subtype", imageName);
+            image.set("BitsPerComponent", 8);
+            image.set("ColorSpace", _primitives.Name.get("DeviceRGB"));
+            image.set("Filter", _primitives.Name.get("DCTDecode"));
+            image.set("BBox", [0, 0, width, height]);
+            image.set("Width", width);
+            image.set("Height", height);
+            let smaskStream = null;
+            if (hasAlpha) {
+              const alphaBuffer = new Uint8Array(buf32.length);
+              if (_util.FeatureTest.isLittleEndian) {
+                for (let i = 0, ii = buf32.length; i < ii; i++) {
+                  alphaBuffer[i] = buf32[i] >>> 24;
+                }
+              } else {
+                for (let i = 0, ii = buf32.length; i < ii; i++) {
+                  alphaBuffer[i] = buf32[i] & 0xff;
+                }
+              }
+              const smask = new _primitives.Dict(xref);
+              smask.set("Type", xobjectName);
+              smask.set("Subtype", imageName);
+              smask.set("BitsPerComponent", 8);
+              smask.set("ColorSpace", _primitives.Name.get("DeviceGray"));
+              smask.set("Width", width);
+              smask.set("Height", height);
+              smaskStream = new _stream.Stream(alphaBuffer, 0, 0, smask);
+            }
+            const imageStream = new _stream.Stream(await jpegBufferPromise, 0, 0, image);
+            return {
+              imageStream,
+              smaskStream,
+              width,
+              height
+            };
+          }
+          static createNewDict(annotation, xref, {
+            apRef,
+            ap
+          }) {
+            const {
+              rect,
+              rotation,
+              user
+            } = annotation;
+            const stamp = new _primitives.Dict(xref);
+            stamp.set("Type", _primitives.Name.get("Annot"));
+            stamp.set("Subtype", _primitives.Name.get("Stamp"));
+            stamp.set("CreationDate", `D:${(0, _util.getModificationDate)()}`);
+            stamp.set("Rect", rect);
+            stamp.set("F", 4);
+            stamp.set("Border", [0, 0, 0]);
+            stamp.set("Rotate", rotation);
+            if (user) {
+              stamp.set("T", (0, _core_utils.isAscii)(user) ? user : (0, _core_utils.stringToUTF16String)(user, true));
+            }
+            if (apRef || ap) {
+              const n = new _primitives.Dict(xref);
+              stamp.set("AP", n);
+              if (apRef) {
+                n.set("N", apRef);
+              } else {
+                n.set("N", ap);
+              }
+            }
+            return stamp;
+          }
+          static async createNewAppearanceStream(annotation, xref, params) {
+            const {
+              rotation
+            } = annotation;
+            const {
+              imageRef,
+              width,
+              height
+            } = params.image;
+            const resources = new _primitives.Dict(xref);
+            const xobject = new _primitives.Dict(xref);
+            resources.set("XObject", xobject);
+            xobject.set("Im0", imageRef);
+            const appearance = `q ${width} 0 0 ${height} 0 0 cm /Im0 Do Q`;
+            const appearanceStreamDict = new _primitives.Dict(xref);
+            appearanceStreamDict.set("FormType", 1);
+            appearanceStreamDict.set("Subtype", _primitives.Name.get("Form"));
+            appearanceStreamDict.set("Type", _primitives.Name.get("XObject"));
+            appearanceStreamDict.set("BBox", [0, 0, width, height]);
+            appearanceStreamDict.set("Resources", resources);
+            if (rotation) {
+              const matrix = (0, _core_utils.getRotationMatrix)(rotation, width, height);
+              appearanceStreamDict.set("Matrix", matrix);
+            }
+            const ap = new _stream.StringStream(appearance);
+            ap.dict = appearanceStreamDict;
+            return ap;
           }
         }
         class FileAttachmentAnnotation extends MarkupAnnotation {
@@ -7094,6 +7515,8 @@
             this.data.file = file.serializable;
             const name = dict.get("Name");
             this.data.name = name instanceof _primitives.Name ? (0, _util.stringToPDFString)(name.name) : "PushPin";
+            const fillAlpha = dict.get("ca");
+            this.data.fillAlpha = typeof fillAlpha === "number" && fillAlpha >= 0 && fillAlpha <= 1 ? fillAlpha : null;
           }
         }
 
@@ -7110,12 +7533,15 @@
         exports.FakeUnicodeFont = void 0;
         exports.createDefaultAppearance = createDefaultAppearance;
         exports.getPdfColor = getPdfColor;
+        exports.parseAppearanceStream = parseAppearanceStream;
         exports.parseDefaultAppearance = parseDefaultAppearance;
         var _primitives = __w_pdfjs_require__(4);
         var _core_utils = __w_pdfjs_require__(3);
         var _util = __w_pdfjs_require__(2);
         var _colorspace = __w_pdfjs_require__(12);
         var _evaluator = __w_pdfjs_require__(13);
+        var _image_utils = __w_pdfjs_require__(59);
+        var _function = __w_pdfjs_require__(57);
         var _stream = __w_pdfjs_require__(8);
         class DefaultAppearanceEvaluator extends _evaluator.EvaluatorPreprocessor {
           constructor(str) {
@@ -7160,7 +7586,7 @@
                   case _util.OPS.setFillGray:
                     _colorspace.ColorSpace.singletons.gray.getRgbItem(args, 0, result.fontColor, 0);
                     break;
-                  case _util.OPS.setFillColorSpace:
+                  case _util.OPS.setFillCMYKColor:
                     _colorspace.ColorSpace.singletons.cmyk.getRgbItem(args, 0, result.fontColor, 0);
                     break;
                 }
@@ -7173,6 +7599,115 @@
         }
         function parseDefaultAppearance(str) {
           return new DefaultAppearanceEvaluator(str).parse();
+        }
+        class AppearanceStreamEvaluator extends _evaluator.EvaluatorPreprocessor {
+          constructor(stream, evaluatorOptions, xref) {
+            super(stream);
+            this.stream = stream;
+            this.evaluatorOptions = evaluatorOptions;
+            this.xref = xref;
+            this.resources = stream.dict?.get("Resources");
+          }
+          parse() {
+            const operation = {
+              fn: 0,
+              args: []
+            };
+            let result = {
+              scaleFactor: 1,
+              fontSize: 0,
+              fontName: "",
+              fontColor: new Uint8ClampedArray(3),
+              fillColorSpace: _colorspace.ColorSpace.singletons.gray
+            };
+            let breakLoop = false;
+            const stack = [];
+            try {
+              while (true) {
+                operation.args.length = 0;
+                if (breakLoop || !this.read(operation)) {
+                  break;
+                }
+                const {
+                  fn,
+                  args
+                } = operation;
+                switch (fn | 0) {
+                  case _util.OPS.save:
+                    stack.push({
+                      scaleFactor: result.scaleFactor,
+                      fontSize: result.fontSize,
+                      fontName: result.fontName,
+                      fontColor: result.fontColor.slice(),
+                      fillColorSpace: result.fillColorSpace
+                    });
+                    break;
+                  case _util.OPS.restore:
+                    result = stack.pop() || result;
+                    break;
+                  case _util.OPS.setTextMatrix:
+                    result.scaleFactor *= Math.hypot(args[0], args[1]);
+                    break;
+                  case _util.OPS.setFont:
+                    const [fontName, fontSize] = args;
+                    if (fontName instanceof _primitives.Name) {
+                      result.fontName = fontName.name;
+                    }
+                    if (typeof fontSize === "number" && fontSize > 0) {
+                      result.fontSize = fontSize * result.scaleFactor;
+                    }
+                    break;
+                  case _util.OPS.setFillColorSpace:
+                    result.fillColorSpace = _colorspace.ColorSpace.parse({
+                      cs: args[0],
+                      xref: this.xref,
+                      resources: this.resources,
+                      pdfFunctionFactory: this._pdfFunctionFactory,
+                      localColorSpaceCache: this._localColorSpaceCache
+                    });
+                    break;
+                  case _util.OPS.setFillColor:
+                    const cs = result.fillColorSpace;
+                    cs.getRgbItem(args, 0, result.fontColor, 0);
+                    break;
+                  case _util.OPS.setFillRGBColor:
+                    _colorspace.ColorSpace.singletons.rgb.getRgbItem(args, 0, result.fontColor, 0);
+                    break;
+                  case _util.OPS.setFillGray:
+                    _colorspace.ColorSpace.singletons.gray.getRgbItem(args, 0, result.fontColor, 0);
+                    break;
+                  case _util.OPS.setFillCMYKColor:
+                    _colorspace.ColorSpace.singletons.cmyk.getRgbItem(args, 0, result.fontColor, 0);
+                    break;
+                  case _util.OPS.showText:
+                  case _util.OPS.showSpacedText:
+                  case _util.OPS.nextLineShowText:
+                  case _util.OPS.nextLineSetSpacingShowText:
+                    breakLoop = true;
+                    break;
+                }
+              }
+            } catch (reason) {
+              (0, _util.warn)(`parseAppearanceStream - ignoring errors: "${reason}".`);
+            }
+            this.stream.reset();
+            delete result.scaleFactor;
+            delete result.fillColorSpace;
+            return result;
+          }
+          get _localColorSpaceCache() {
+            return (0, _util.shadow)(this, "_localColorSpaceCache", new _image_utils.LocalColorSpaceCache());
+          }
+          get _pdfFunctionFactory() {
+            const pdfFunctionFactory = new _function.PDFFunctionFactory({
+              xref: this.xref,
+              isEvalSupported: this.evaluatorOptions.isEvalSupported
+            });
+            return (0, _util.shadow)(this, "_pdfFunctionFactory", pdfFunctionFactory);
+          }
+        }
+        function parseAppearanceStream(stream, evaluatorOptions, xref) {
+          return new AppearanceStreamEvaluator(stream, evaluatorOptions, xref).parse();
         }
         function getPdfColor(color, isFill) {
           if (color[0] === color[1] && color[1] === color[2]) {
@@ -7496,13 +8031,11 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                   rgbBuf[rgbPos++] = colorMap[key + 2];
                 }
               }
+            } else if (!needsResizing) {
+              this.getRgbBuffer(comps, 0, width * actualHeight, dest, 0, bpc, alpha01);
             } else {
-              if (!needsResizing) {
-                this.getRgbBuffer(comps, 0, width * actualHeight, dest, 0, bpc, alpha01);
-              } else {
-                rgbBuf = new Uint8ClampedArray(count * 3);
-                this.getRgbBuffer(comps, 0, count, rgbBuf, 0, bpc, 0);
-              }
+              rgbBuf = new Uint8ClampedArray(count * 3);
+              this.getRgbBuffer(comps, 0, count, rgbBuf, 0, bpc, 0);
             }
             if (rgbBuf) {
               if (needsResizing) {
@@ -7894,8 +8427,11 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             return bits === 8;
           }
         }
-        const DeviceCmykCS = function DeviceCmykCSClosure() {
-          function convertToRgb(src, srcOffset, srcScale, dest, destOffset) {
+        class DeviceCmykCS extends ColorSpace {
+          constructor() {
+            super("DeviceCMYK", 4);
+          }
+          #toRgb(src, srcOffset, srcScale, dest, destOffset) {
             const c = src[srcOffset] * srcScale;
             const m = src[srcOffset + 1] * srcScale;
             const y = src[srcOffset + 2] * srcScale;
@@ -7904,104 +8440,110 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             dest[destOffset + 1] = 255 + c * (8.841041422036149 * c + 60.118027045597366 * m + 6.871425592049007 * y + 31.159100130055922 * k + -79.2970844816548) + m * (-15.310361306967817 * m + 17.575251261109482 * y + 131.35250912493976 * k - 190.9453302588951) + y * (4.444339102852739 * y + 9.8632861493405 * k - 24.86741582555878) + k * (-20.737325471181034 * k - 187.80453709719578);
             dest[destOffset + 2] = 255 + c * (0.8842522430003296 * c + 8.078677503112928 * m + 30.89978309703729 * y - 0.23883238689178934 * k + -14.183576799673286) + m * (10.49593273432072 * m + 63.02378494754052 * y + 50.606957656360734 * k - 112.23884253719248) + y * (0.03296041114873217 * y + 115.60384449646641 * k + -193.58209356861505) + k * (-22.33816807309886 * k - 180.12613974708367);
           }
-          class DeviceCmykCS extends ColorSpace {
-            constructor() {
-              super("DeviceCMYK", 4);
-            }
-            getRgbItem(src, srcOffset, dest, destOffset) {
-              convertToRgb(src, srcOffset, 1, dest, destOffset);
-            }
-            getRgbBuffer(src, srcOffset, count, dest, destOffset, bits, alpha01) {
-              const scale = 1 / ((1 << bits) - 1);
-              for (let i = 0; i < count; i++) {
-                convertToRgb(src, srcOffset, scale, dest, destOffset);
-                srcOffset += 4;
-                destOffset += 3 + alpha01;
-              }
-            }
-            getOutputLength(inputLength, alpha01) {
-              return inputLength / 4 * (3 + alpha01) | 0;
+          getRgbItem(src, srcOffset, dest, destOffset) {
+            this.#toRgb(src, srcOffset, 1, dest, destOffset);
+          }
+          getRgbBuffer(src, srcOffset, count, dest, destOffset, bits, alpha01) {
+            const scale = 1 / ((1 << bits) - 1);
+            for (let i = 0; i < count; i++) {
+              this.#toRgb(src, srcOffset, scale, dest, destOffset);
+              srcOffset += 4;
+              destOffset += 3 + alpha01;
             }
           }
-          return DeviceCmykCS;
-        }();
-        const CalGrayCS = function CalGrayCSClosure() {
-          function convertToRgb(cs, src, srcOffset, dest, destOffset, scale) {
+          getOutputLength(inputLength, alpha01) {
+            return inputLength / 4 * (3 + alpha01) | 0;
+          }
+        }
+        class CalGrayCS extends ColorSpace {
+          constructor(whitePoint, blackPoint, gamma) {
+            super("CalGray", 1);
+            if (!whitePoint) {
+              throw new _util.FormatError("WhitePoint missing - required for color space CalGray");
+            }
+            [this.XW, this.YW, this.ZW] = whitePoint;
+            [this.XB, this.YB, this.ZB] = blackPoint || [0, 0, 0];
+            this.G = gamma || 1;
+            if (this.XW < 0 || this.ZW < 0 || this.YW !== 1) {
+              throw new _util.FormatError(`Invalid WhitePoint components for ${this.name}, no fallback available`);
+            }
+            if (this.XB < 0 || this.YB < 0 || this.ZB < 0) {
+              (0, _util.info)(`Invalid BlackPoint for ${this.name}, falling back to default.`);
+              this.XB = this.YB = this.ZB = 0;
+            }
+            if (this.XB !== 0 || this.YB !== 0 || this.ZB !== 0) {
+              (0, _util.warn)(`${this.name}, BlackPoint: XB: ${this.XB}, YB: ${this.YB}, ` + `ZB: ${this.ZB}, only default values are supported.`);
+            }
+            if (this.G < 1) {
+              (0, _util.info)(`Invalid Gamma: ${this.G} for ${this.name}, falling back to default.`);
+              this.G = 1;
+            }
+          }
+          #toRgb(src, srcOffset, dest, destOffset, scale) {
             const A = src[srcOffset] * scale;
-            const AG = A ** cs.G;
-            const L = cs.YW * AG;
+            const AG = A ** this.G;
+            const L = this.YW * AG;
             const val = Math.max(295.8 * L ** 0.3333333333333333 - 40.8, 0);
             dest[destOffset] = val;
             dest[destOffset + 1] = val;
             dest[destOffset + 2] = val;
           }
-          class CalGrayCS extends ColorSpace {
-            constructor(whitePoint, blackPoint, gamma) {
-              super("CalGray", 1);
-              if (!whitePoint) {
-                throw new _util.FormatError("WhitePoint missing - required for color space CalGray");
-              }
-              blackPoint ||= [0, 0, 0];
-              gamma ||= 1;
-              this.XW = whitePoint[0];
-              this.YW = whitePoint[1];
-              this.ZW = whitePoint[2];
-              this.XB = blackPoint[0];
-              this.YB = blackPoint[1];
-              this.ZB = blackPoint[2];
-              this.G = gamma;
-              if (this.XW < 0 || this.ZW < 0 || this.YW !== 1) {
-                throw new _util.FormatError(`Invalid WhitePoint components for ${this.name}` + ", no fallback available");
-              }
-              if (this.XB < 0 || this.YB < 0 || this.ZB < 0) {
-                (0, _util.info)(`Invalid BlackPoint for ${this.name}, falling back to default.`);
-                this.XB = this.YB = this.ZB = 0;
-              }
-              if (this.XB !== 0 || this.YB !== 0 || this.ZB !== 0) {
-                (0, _util.warn)(`${this.name}, BlackPoint: XB: ${this.XB}, YB: ${this.YB}, ` + `ZB: ${this.ZB}, only default values are supported.`);
-              }
-              if (this.G < 1) {
-                (0, _util.info)(`Invalid Gamma: ${this.G} for ${this.name}, ` + "falling back to default.");
-                this.G = 1;
-              }
-            }
-            getRgbItem(src, srcOffset, dest, destOffset) {
-              convertToRgb(this, src, srcOffset, dest, destOffset, 1);
-            }
-            getRgbBuffer(src, srcOffset, count, dest, destOffset, bits, alpha01) {
-              const scale = 1 / ((1 << bits) - 1);
-              for (let i = 0; i < count; ++i) {
-                convertToRgb(this, src, srcOffset, dest, destOffset, scale);
-                srcOffset += 1;
-                destOffset += 3 + alpha01;
-              }
-            }
-            getOutputLength(inputLength, alpha01) {
-              return inputLength * (3 + alpha01);
+          getRgbItem(src, srcOffset, dest, destOffset) {
+            this.#toRgb(src, srcOffset, dest, destOffset, 1);
+          }
+          getRgbBuffer(src, srcOffset, count, dest, destOffset, bits, alpha01) {
+            const scale = 1 / ((1 << bits) - 1);
+            for (let i = 0; i < count; ++i) {
+              this.#toRgb(src, srcOffset, dest, destOffset, scale);
+              srcOffset += 1;
+              destOffset += 3 + alpha01;
             }
           }
-          return CalGrayCS;
-        }();
-        const CalRGBCS = function CalRGBCSClosure() {
-          const BRADFORD_SCALE_MATRIX = new Float32Array([0.8951, 0.2664, -0.1614, -0.7502, 1.7135, 0.0367, 0.0389, -0.0685, 1.0296]);
-          const BRADFORD_SCALE_INVERSE_MATRIX = new Float32Array([0.9869929, -0.1470543, 0.1599627, 0.4323053, 0.5183603, 0.0492912, -0.0085287, 0.0400428, 0.9684867]);
-          const SRGB_D65_XYZ_TO_RGB_MATRIX = new Float32Array([3.2404542, -1.5371385, -0.4985314, -0.9692660, 1.8760108, 0.0415560, 0.0556434, -0.2040259, 1.0572252]);
-          const FLAT_WHITEPOINT_MATRIX = new Float32Array([1, 1, 1]);
-          const tempNormalizeMatrix = new Float32Array(3);
-          const tempConvertMatrix1 = new Float32Array(3);
-          const tempConvertMatrix2 = new Float32Array(3);
-          const DECODE_L_CONSTANT = ((8 + 16) / 116) ** 3 / 8.0;
-          function matrixProduct(a, b, result) {
+          getOutputLength(inputLength, alpha01) {
+            return inputLength * (3 + alpha01);
+          }
+        }
+        class CalRGBCS extends ColorSpace {
+          static #BRADFORD_SCALE_MATRIX = new Float32Array([0.8951, 0.2664, -0.1614, -0.7502, 1.7135, 0.0367, 0.0389, -0.0685, 1.0296]);
+          static #BRADFORD_SCALE_INVERSE_MATRIX = new Float32Array([0.9869929, -0.1470543, 0.1599627, 0.4323053, 0.5183603, 0.0492912, -0.0085287, 0.0400428, 0.9684867]);
+          static #SRGB_D65_XYZ_TO_RGB_MATRIX = new Float32Array([3.2404542, -1.5371385, -0.4985314, -0.9692660, 1.8760108, 0.0415560, 0.0556434, -0.2040259, 1.0572252]);
+          static #FLAT_WHITEPOINT_MATRIX = new Float32Array([1, 1, 1]);
+          static #tempNormalizeMatrix = new Float32Array(3);
+          static #tempConvertMatrix1 = new Float32Array(3);
+          static #tempConvertMatrix2 = new Float32Array(3);
+          static #DECODE_L_CONSTANT = ((8 + 16) / 116) ** 3 / 8.0;
+          constructor(whitePoint, blackPoint, gamma, matrix) {
+            super("CalRGB", 3);
+            if (!whitePoint) {
+              throw new _util.FormatError("WhitePoint missing - required for color space CalRGB");
+            }
+            const [XW, YW, ZW] = this.whitePoint = whitePoint;
+            const [XB, YB, ZB] = this.blackPoint = blackPoint || new Float32Array(3);
+            [this.GR, this.GG, this.GB] = gamma || new Float32Array([1, 1, 1]);
+            [this.MXA, this.MYA, this.MZA, this.MXB, this.MYB, this.MZB, this.MXC, this.MYC, this.MZC] = matrix || new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+            if (XW < 0 || ZW < 0 || YW !== 1) {
+              throw new _util.FormatError(`Invalid WhitePoint components for ${this.name}, no fallback available`);
+            }
+            if (XB < 0 || YB < 0 || ZB < 0) {
+              (0, _util.info)(`Invalid BlackPoint for ${this.name} [${XB}, ${YB}, ${ZB}], ` + "falling back to default.");
+              this.blackPoint = new Float32Array(3);
+            }
+            if (this.GR < 0 || this.GG < 0 || this.GB < 0) {
+              (0, _util.info)(`Invalid Gamma [${this.GR}, ${this.GG}, ${this.GB}] for ` + `${this.name}, falling back to default.`);
+              this.GR = this.GG = this.GB = 1;
+            }
+          }
+          #matrixProduct(a, b, result) {
             result[0] = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
             result[1] = a[3] * b[0] + a[4] * b[1] + a[5] * b[2];
             result[2] = a[6] * b[0] + a[7] * b[1] + a[8] * b[2];
           }
-          function convertToFlat(sourceWhitePoint, LMS, result) {
+          #toFlat(sourceWhitePoint, LMS, result) {
             result[0] = LMS[0] * 1 / sourceWhitePoint[0];
             result[1] = LMS[1] * 1 / sourceWhitePoint[1];
             result[2] = LMS[2] * 1 / sourceWhitePoint[2];
           }
-          function convertToD65(sourceWhitePoint, LMS, result) {
+          #toD65(sourceWhitePoint, LMS, result) {
             const D65X = 0.95047;
             const D65Y = 1;
             const D65Z = 1.08883;
@@ -8009,41 +8551,41 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             result[1] = LMS[1] * D65Y / sourceWhitePoint[1];
             result[2] = LMS[2] * D65Z / sourceWhitePoint[2];
           }
-          function sRGBTransferFunction(color) {
+          #sRGBTransferFunction(color) {
             if (color <= 0.0031308) {
-              return adjustToRange(0, 1, 12.92 * color);
+              return this.#adjustToRange(0, 1, 12.92 * color);
             }
             if (color >= 0.99554525) {
               return 1;
             }
-            return adjustToRange(0, 1, (1 + 0.055) * color ** (1 / 2.4) - 0.055);
+            return this.#adjustToRange(0, 1, (1 + 0.055) * color ** (1 / 2.4) - 0.055);
           }
-          function adjustToRange(min, max, value) {
+          #adjustToRange(min, max, value) {
             return Math.max(min, Math.min(max, value));
           }
-          function decodeL(L) {
+          #decodeL(L) {
             if (L < 0) {
-              return -decodeL(-L);
+              return -this.#decodeL(-L);
             }
             if (L > 8.0) {
               return ((L + 16) / 116) ** 3;
             }
-            return L * DECODE_L_CONSTANT;
+            return L * CalRGBCS.#DECODE_L_CONSTANT;
           }
-          function compensateBlackPoint(sourceBlackPoint, XYZ_Flat, result) {
+          #compensateBlackPoint(sourceBlackPoint, XYZ_Flat, result) {
             if (sourceBlackPoint[0] === 0 && sourceBlackPoint[1] === 0 && sourceBlackPoint[2] === 0) {
               result[0] = XYZ_Flat[0];
               result[1] = XYZ_Flat[1];
               result[2] = XYZ_Flat[2];
               return;
             }
-            const zeroDecodeL = decodeL(0);
+            const zeroDecodeL = this.#decodeL(0);
             const X_DST = zeroDecodeL;
-            const X_SRC = decodeL(sourceBlackPoint[0]);
+            const X_SRC = this.#decodeL(sourceBlackPoint[0]);
             const Y_DST = zeroDecodeL;
-            const Y_SRC = decodeL(sourceBlackPoint[1]);
+            const Y_SRC = this.#decodeL(sourceBlackPoint[1]);
             const Z_DST = zeroDecodeL;
-            const Z_SRC = decodeL(sourceBlackPoint[2]);
+            const Z_SRC = this.#decodeL(sourceBlackPoint[2]);
             const X_Scale = (1 - X_DST) / (1 - X_SRC);
             const X_Offset = 1 - X_Scale;
             const Y_Scale = (1 - Y_DST) / (1 - Y_SRC);
@@ -8054,7 +8596,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             result[1] = XYZ_Flat[1] * Y_Scale + Y_Offset;
             result[2] = XYZ_Flat[2] * Z_Scale + Z_Offset;
           }
-          function normalizeWhitePointToFlat(sourceWhitePoint, XYZ_In, result) {
+          #normalizeWhitePointToFlat(sourceWhitePoint, XYZ_In, result) {
             if (sourceWhitePoint[0] === 1 && sourceWhitePoint[2] === 1) {
               result[0] = XYZ_In[0];
               result[1] = XYZ_In[1];
@@ -8062,142 +8604,116 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               return;
             }
             const LMS = result;
-            matrixProduct(BRADFORD_SCALE_MATRIX, XYZ_In, LMS);
-            const LMS_Flat = tempNormalizeMatrix;
-            convertToFlat(sourceWhitePoint, LMS, LMS_Flat);
-            matrixProduct(BRADFORD_SCALE_INVERSE_MATRIX, LMS_Flat, result);
+            this.#matrixProduct(CalRGBCS.#BRADFORD_SCALE_MATRIX, XYZ_In, LMS);
+            const LMS_Flat = CalRGBCS.#tempNormalizeMatrix;
+            this.#toFlat(sourceWhitePoint, LMS, LMS_Flat);
+            this.#matrixProduct(CalRGBCS.#BRADFORD_SCALE_INVERSE_MATRIX, LMS_Flat, result);
           }
-          function normalizeWhitePointToD65(sourceWhitePoint, XYZ_In, result) {
+          #normalizeWhitePointToD65(sourceWhitePoint, XYZ_In, result) {
             const LMS = result;
-            matrixProduct(BRADFORD_SCALE_MATRIX, XYZ_In, LMS);
-            const LMS_D65 = tempNormalizeMatrix;
-            convertToD65(sourceWhitePoint, LMS, LMS_D65);
-            matrixProduct(BRADFORD_SCALE_INVERSE_MATRIX, LMS_D65, result);
+            this.#matrixProduct(CalRGBCS.#BRADFORD_SCALE_MATRIX, XYZ_In, LMS);
+            const LMS_D65 = CalRGBCS.#tempNormalizeMatrix;
+            this.#toD65(sourceWhitePoint, LMS, LMS_D65);
+            this.#matrixProduct(CalRGBCS.#BRADFORD_SCALE_INVERSE_MATRIX, LMS_D65, result);
           }
-          function convertToRgb(cs, src, srcOffset, dest, destOffset, scale) {
-            const A = adjustToRange(0, 1, src[srcOffset] * scale);
-            const B = adjustToRange(0, 1, src[srcOffset + 1] * scale);
-            const C = adjustToRange(0, 1, src[srcOffset + 2] * scale);
-            const AGR = A === 1 ? 1 : A ** cs.GR;
-            const BGG = B === 1 ? 1 : B ** cs.GG;
-            const CGB = C === 1 ? 1 : C ** cs.GB;
-            const X = cs.MXA * AGR + cs.MXB * BGG + cs.MXC * CGB;
-            const Y = cs.MYA * AGR + cs.MYB * BGG + cs.MYC * CGB;
-            const Z = cs.MZA * AGR + cs.MZB * BGG + cs.MZC * CGB;
-            const XYZ = tempConvertMatrix1;
+          #toRgb(src, srcOffset, dest, destOffset, scale) {
+            const A = this.#adjustToRange(0, 1, src[srcOffset] * scale);
+            const B = this.#adjustToRange(0, 1, src[srcOffset + 1] * scale);
+            const C = this.#adjustToRange(0, 1, src[srcOffset + 2] * scale);
+            const AGR = A === 1 ? 1 : A ** this.GR;
+            const BGG = B === 1 ? 1 : B ** this.GG;
+            const CGB = C === 1 ? 1 : C ** this.GB;
+            const X = this.MXA * AGR + this.MXB * BGG + this.MXC * CGB;
+            const Y = this.MYA * AGR + this.MYB * BGG + this.MYC * CGB;
+            const Z = this.MZA * AGR + this.MZB * BGG + this.MZC * CGB;
+            const XYZ = CalRGBCS.#tempConvertMatrix1;
             XYZ[0] = X;
             XYZ[1] = Y;
             XYZ[2] = Z;
-            const XYZ_Flat = tempConvertMatrix2;
-            normalizeWhitePointToFlat(cs.whitePoint, XYZ, XYZ_Flat);
-            const XYZ_Black = tempConvertMatrix1;
-            compensateBlackPoint(cs.blackPoint, XYZ_Flat, XYZ_Black);
-            const XYZ_D65 = tempConvertMatrix2;
-            normalizeWhitePointToD65(FLAT_WHITEPOINT_MATRIX, XYZ_Black, XYZ_D65);
-            const SRGB = tempConvertMatrix1;
-            matrixProduct(SRGB_D65_XYZ_TO_RGB_MATRIX, XYZ_D65, SRGB);
-            dest[destOffset] = sRGBTransferFunction(SRGB[0]) * 255;
-            dest[destOffset + 1] = sRGBTransferFunction(SRGB[1]) * 255;
-            dest[destOffset + 2] = sRGBTransferFunction(SRGB[2]) * 255;
+            const XYZ_Flat = CalRGBCS.#tempConvertMatrix2;
+            this.#normalizeWhitePointToFlat(this.whitePoint, XYZ, XYZ_Flat);
+            const XYZ_Black = CalRGBCS.#tempConvertMatrix1;
+            this.#compensateBlackPoint(this.blackPoint, XYZ_Flat, XYZ_Black);
+            const XYZ_D65 = CalRGBCS.#tempConvertMatrix2;
+            this.#normalizeWhitePointToD65(CalRGBCS.#FLAT_WHITEPOINT_MATRIX, XYZ_Black, XYZ_D65);
+            const SRGB = CalRGBCS.#tempConvertMatrix1;
+            this.#matrixProduct(CalRGBCS.#SRGB_D65_XYZ_TO_RGB_MATRIX, XYZ_D65, SRGB);
+            dest[destOffset] = this.#sRGBTransferFunction(SRGB[0]) * 255;
+            dest[destOffset + 1] = this.#sRGBTransferFunction(SRGB[1]) * 255;
+            dest[destOffset + 2] = this.#sRGBTransferFunction(SRGB[2]) * 255;
           }
-          class CalRGBCS extends ColorSpace {
-            constructor(whitePoint, blackPoint, gamma, matrix) {
-              super("CalRGB", 3);
-              if (!whitePoint) {
-                throw new _util.FormatError("WhitePoint missing - required for color space CalRGB");
-              }
-              blackPoint ||= new Float32Array(3);
-              gamma ||= new Float32Array([1, 1, 1]);
-              matrix ||= new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]);
-              const XW = whitePoint[0];
-              const YW = whitePoint[1];
-              const ZW = whitePoint[2];
-              this.whitePoint = whitePoint;
-              const XB = blackPoint[0];
-              const YB = blackPoint[1];
-              const ZB = blackPoint[2];
-              this.blackPoint = blackPoint;
-              this.GR = gamma[0];
-              this.GG = gamma[1];
-              this.GB = gamma[2];
-              this.MXA = matrix[0];
-              this.MYA = matrix[1];
-              this.MZA = matrix[2];
-              this.MXB = matrix[3];
-              this.MYB = matrix[4];
-              this.MZB = matrix[5];
-              this.MXC = matrix[6];
-              this.MYC = matrix[7];
-              this.MZC = matrix[8];
-              if (XW < 0 || ZW < 0 || YW !== 1) {
-                throw new _util.FormatError(`Invalid WhitePoint components for ${this.name}` + ", no fallback available");
-              }
-              if (XB < 0 || YB < 0 || ZB < 0) {
-                (0, _util.info)(`Invalid BlackPoint for ${this.name} [${XB}, ${YB}, ${ZB}], ` + "falling back to default.");
-                this.blackPoint = new Float32Array(3);
-              }
-              if (this.GR < 0 || this.GG < 0 || this.GB < 0) {
-                (0, _util.info)(`Invalid Gamma [${this.GR}, ${this.GG}, ${this.GB}] for ` + `${this.name}, falling back to default.`);
-                this.GR = this.GG = this.GB = 1;
-              }
-            }
-            getRgbItem(src, srcOffset, dest, destOffset) {
-              convertToRgb(this, src, srcOffset, dest, destOffset, 1);
-            }
-            getRgbBuffer(src, srcOffset, count, dest, destOffset, bits, alpha01) {
-              const scale = 1 / ((1 << bits) - 1);
-              for (let i = 0; i < count; ++i) {
-                convertToRgb(this, src, srcOffset, dest, destOffset, scale);
-                srcOffset += 3;
-                destOffset += 3 + alpha01;
-              }
-            }
-            getOutputLength(inputLength, alpha01) {
-              return inputLength * (3 + alpha01) / 3 | 0;
+          getRgbItem(src, srcOffset, dest, destOffset) {
+            this.#toRgb(src, srcOffset, dest, destOffset, 1);
+          }
+          getRgbBuffer(src, srcOffset, count, dest, destOffset, bits, alpha01) {
+            const scale = 1 / ((1 << bits) - 1);
+            for (let i = 0; i < count; ++i) {
+              this.#toRgb(src, srcOffset, dest, destOffset, scale);
+              srcOffset += 3;
+              destOffset += 3 + alpha01;
             }
           }
-          return CalRGBCS;
-        }();
-        const LabCS = function LabCSClosure() {
-          function fn_g(x) {
-            let result;
-            if (x >= 6 / 29) {
-              result = x ** 3;
-            } else {
-              result = 108 / 841 * (x - 4 / 29);
-            }
-            return result;
+          getOutputLength(inputLength, alpha01) {
+            return inputLength * (3 + alpha01) / 3 | 0;
           }
-          function decode(value, high1, low2, high2) {
+        }
+        class LabCS extends ColorSpace {
+          constructor(whitePoint, blackPoint, range) {
+            super("Lab", 3);
+            if (!whitePoint) {
+              throw new _util.FormatError("WhitePoint missing - required for color space Lab");
+            }
+            [this.XW, this.YW, this.ZW] = whitePoint;
+            [this.amin, this.amax, this.bmin, this.bmax] = range || [-100, 100, -100, 100];
+            [this.XB, this.YB, this.ZB] = blackPoint || [0, 0, 0];
+            if (this.XW < 0 || this.ZW < 0 || this.YW !== 1) {
+              throw new _util.FormatError("Invalid WhitePoint components, no fallback available");
+            }
+            if (this.XB < 0 || this.YB < 0 || this.ZB < 0) {
+              (0, _util.info)("Invalid BlackPoint, falling back to default");
+              this.XB = this.YB = this.ZB = 0;
+            }
+            if (this.amin > this.amax || this.bmin > this.bmax) {
+              (0, _util.info)("Invalid Range, falling back to defaults");
+              this.amin = -100;
+              this.amax = 100;
+              this.bmin = -100;
+              this.bmax = 100;
+            }
+          }
+          #fn_g(x) {
+            return x >= 6 / 29 ? x ** 3 : 108 / 841 * (x - 4 / 29);
+          }
+          #decode(value, high1, low2, high2) {
             return low2 + value * (high2 - low2) / high1;
           }
-          function convertToRgb(cs, src, srcOffset, maxVal, dest, destOffset) {
+          #toRgb(src, srcOffset, maxVal, dest, destOffset) {
             let Ls = src[srcOffset];
             let as = src[srcOffset + 1];
             let bs = src[srcOffset + 2];
             if (maxVal !== false) {
-              Ls = decode(Ls, maxVal, 0, 100);
-              as = decode(as, maxVal, cs.amin, cs.amax);
-              bs = decode(bs, maxVal, cs.bmin, cs.bmax);
+              Ls = this.#decode(Ls, maxVal, 0, 100);
+              as = this.#decode(as, maxVal, this.amin, this.amax);
+              bs = this.#decode(bs, maxVal, this.bmin, this.bmax);
             }
-            if (as > cs.amax) {
-              as = cs.amax;
-            } else if (as < cs.amin) {
-              as = cs.amin;
+            if (as > this.amax) {
+              as = this.amax;
+            } else if (as < this.amin) {
+              as = this.amin;
             }
-            if (bs > cs.bmax) {
-              bs = cs.bmax;
-            } else if (bs < cs.bmin) {
-              bs = cs.bmin;
+            if (bs > this.bmax) {
+              bs = this.bmax;
+            } else if (bs < this.bmin) {
+              bs = this.bmin;
             }
             const M = (Ls + 16) / 116;
             const L = M + as / 500;
             const N = M - bs / 200;
-            const X = cs.XW * fn_g(L);
-            const Y = cs.YW * fn_g(M);
-            const Z = cs.ZW * fn_g(N);
+            const X = this.XW * this.#fn_g(L);
+            const Y = this.YW * this.#fn_g(M);
+            const Z = this.ZW * this.#fn_g(N);
             let r, g, b;
-            if (cs.ZW < 1) {
+            if (this.ZW < 1) {
               r = X * 3.1339 + Y * -1.617 + Z * -0.4906;
               g = X * -0.9785 + Y * 1.916 + Z * 0.0333;
               b = X * 0.072 + Y * -0.229 + Z * 1.4057;
@@ -8210,62 +8726,27 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             dest[destOffset + 1] = Math.sqrt(g) * 255;
             dest[destOffset + 2] = Math.sqrt(b) * 255;
           }
-          class LabCS extends ColorSpace {
-            constructor(whitePoint, blackPoint, range) {
-              super("Lab", 3);
-              if (!whitePoint) {
-                throw new _util.FormatError("WhitePoint missing - required for color space Lab");
-              }
-              blackPoint ||= [0, 0, 0];
-              range ||= [-100, 100, -100, 100];
-              this.XW = whitePoint[0];
-              this.YW = whitePoint[1];
-              this.ZW = whitePoint[2];
-              this.amin = range[0];
-              this.amax = range[1];
-              this.bmin = range[2];
-              this.bmax = range[3];
-              this.XB = blackPoint[0];
-              this.YB = blackPoint[1];
-              this.ZB = blackPoint[2];
-              if (this.XW < 0 || this.ZW < 0 || this.YW !== 1) {
-                throw new _util.FormatError("Invalid WhitePoint components, no fallback available");
-              }
-              if (this.XB < 0 || this.YB < 0 || this.ZB < 0) {
-                (0, _util.info)("Invalid BlackPoint, falling back to default");
-                this.XB = this.YB = this.ZB = 0;
-              }
-              if (this.amin > this.amax || this.bmin > this.bmax) {
-                (0, _util.info)("Invalid Range, falling back to defaults");
-                this.amin = -100;
-                this.amax = 100;
-                this.bmin = -100;
-                this.bmax = 100;
-              }
-            }
-            getRgbItem(src, srcOffset, dest, destOffset) {
-              convertToRgb(this, src, srcOffset, false, dest, destOffset);
-            }
-            getRgbBuffer(src, srcOffset, count, dest, destOffset, bits, alpha01) {
-              const maxVal = (1 << bits) - 1;
-              for (let i = 0; i < count; i++) {
-                convertToRgb(this, src, srcOffset, maxVal, dest, destOffset);
-                srcOffset += 3;
-                destOffset += 3 + alpha01;
-              }
-            }
-            getOutputLength(inputLength, alpha01) {
-              return inputLength * (3 + alpha01) / 3 | 0;
-            }
-            isDefaultDecode(decodeMap, bpc) {
-              return true;
-            }
-            get usesZeroToOneRange() {
-              return (0, _util.shadow)(this, "usesZeroToOneRange", false);
+          getRgbItem(src, srcOffset, dest, destOffset) {
+            this.#toRgb(src, srcOffset, false, dest, destOffset);
+          }
+          getRgbBuffer(src, srcOffset, count, dest, destOffset, bits, alpha01) {
+            const maxVal = (1 << bits) - 1;
+            for (let i = 0; i < count; i++) {
+              this.#toRgb(src, srcOffset, maxVal, dest, destOffset);
+              srcOffset += 3;
+              destOffset += 3 + alpha01;
             }
           }
-          return LabCS;
-        }();
+          getOutputLength(inputLength, alpha01) {
+            return inputLength * (3 + alpha01) / 3 | 0;
+          }
+          isDefaultDecode(decodeMap, bpc) {
+            return true;
+          }
+          get usesZeroToOneRange() {
+            return (0, _util.shadow)(this, "usesZeroToOneRange", false);
+          }
+        }
 
         /***/
 }),
@@ -8298,7 +8779,6 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
         var _fonts_utils = __w_pdfjs_require__(38);
         var _font_substitutions = __w_pdfjs_require__(61);
         var _glyphlist = __w_pdfjs_require__(39);
-        var _core_utils = __w_pdfjs_require__(3);
         var _metrics = __w_pdfjs_require__(45);
         var _unicode = __w_pdfjs_require__(40);
         var _image_resizer = __w_pdfjs_require__(62);
@@ -8601,11 +9081,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             const dict = xobj.dict;
             const matrix = dict.getArray("Matrix");
             let bbox = dict.getArray("BBox");
-            if (Array.isArray(bbox) && bbox.length === 4) {
-              bbox = _util.Util.normalizeRect(bbox);
-            } else {
-              bbox = null;
-            }
+            bbox = Array.isArray(bbox) && bbox.length === 4 ? _util.Util.normalizeRect(bbox) : null;
             let optionalContent, groupOptions;
             if (dict.has("OC")) {
               optionalContent = await this.parseMarkedContentProps(dict.get("OC"), resources);
@@ -8782,10 +9258,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               }
               return;
             }
-            const softMask = dict.get("SM", "SMask") || false;
-            const mask = dict.get("Mask") || false;
             const SMALL_IMAGE_DIMENSIONS = 200;
-            if (isInline && !softMask && !mask && w + h < SMALL_IMAGE_DIMENSIONS) {
+            if (isInline && !dict.has("SMask") && !dict.has("Mask") && w + h < SMALL_IMAGE_DIMENSIONS) {
               const imageObj = new _image.PDFImage({
                 xref: this.xref,
                 res: resources,
@@ -8821,12 +9295,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             }).then(async imageObj => {
               imgData = await imageObj.createImageData(false, this.options.isOffscreenCanvasSupported);
               if (cacheKey && imageRef && cacheGlobally) {
-                let length = 0;
-                if (imgData.bitmap) {
-                  length = imgData.width * imgData.height * 4;
-                } else {
-                  length = imgData.data.length;
-                }
+                const length = imgData.bitmap ? imgData.width * imgData.height * 4 : imgData.data.length;
                 this.globalImageCache.addByteSize(imageRef, length);
               }
               return this._sendImgData(objId, imgData, cacheGlobally);
@@ -9295,7 +9764,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                   const tilingPatternIR = (0, _pattern.getTilingPatternIR)(localTilingPattern.operatorListIR, localTilingPattern.dict, color);
                   operatorList.addOp(fn, tilingPatternIR);
                   return undefined;
-                } catch (ex) { }
+                } catch { }
               }
               const pattern = this.xref.fetchIfRef(rawPattern);
               if (pattern) {
@@ -9365,7 +9834,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             } else {
               throw new _util.FormatError("Optional content properties malformed.");
             }
-            const optionalContentType = optionalContent.get("Type").name;
+            const optionalContentType = optionalContent.get("Type")?.name;
             if (optionalContentType === "OCG") {
               return {
                 type: optionalContentType,
@@ -10710,8 +11179,9 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 baseEncodingName = null;
               }
             }
-            const nonEmbeddedFont = !properties.file || properties.isInternalFont;
-            if (baseEncodingName && nonEmbeddedFont && (0, _standard_fonts.getSymbolsFonts)()[properties.name]) {
+            const nonEmbeddedFont = !properties.file || properties.isInternalFont,
+              isSymbolsFontName = (0, _standard_fonts.getSymbolsFonts)()[properties.name];
+            if (baseEncodingName && nonEmbeddedFont && isSymbolsFontName) {
               baseEncodingName = null;
             }
             if (baseEncodingName) {
@@ -10723,7 +11193,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               if (properties.type === "TrueType" && !isNonsymbolicFont) {
                 encoding = _encodings.WinAnsiEncoding;
               }
-              if (isSymbolicFont) {
+              if (isSymbolicFont || isSymbolsFontName) {
                 encoding = _encodings.MacRomanEncoding;
                 if (nonEmbeddedFont) {
                   if (/Symbol/i.test(properties.name)) {
@@ -11044,11 +11514,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             let lookupName = stdFontMap[name] || name;
             const Metrics = (0, _metrics.getMetrics)();
             if (!(lookupName in Metrics)) {
-              if (this.isSerifFont(name)) {
-                lookupName = "Times-Roman";
-              } else {
-                lookupName = "Helvetica";
-              }
+              lookupName = this.isSerifFont(name) ? "Times-Roman" : "Helvetica";
             }
             const glyphWidths = Metrics[lookupName];
             if (typeof glyphWidths === "number") {
@@ -11271,14 +11737,12 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             if (typeof baseFont === "string") {
               baseFont = _primitives.Name.get(baseFont);
             }
-            if (!isType3Font) {
-              const fontNameStr = fontName?.name;
-              const baseFontStr = baseFont?.name;
-              if (fontNameStr !== baseFontStr) {
-                (0, _util.info)(`The FontDescriptor's FontName is "${fontNameStr}" but ` + `should be the same as the Font's BaseFont "${baseFontStr}".`);
-                if (fontNameStr && baseFontStr?.startsWith(fontNameStr)) {
-                  fontName = baseFont;
-                }
+            const fontNameStr = fontName?.name;
+            const baseFontStr = baseFont?.name;
+            if (!isType3Font && fontNameStr !== baseFontStr) {
+              (0, _util.info)(`The FontDescriptor's FontName is "${fontNameStr}" but ` + `should be the same as the Font's BaseFont "${baseFontStr}".`);
+              if (fontNameStr && baseFontStr && (baseFontStr.startsWith(fontNameStr) || !(0, _standard_fonts.isKnownFontName)(fontNameStr) && (0, _standard_fonts.isKnownFontName)(baseFontStr))) {
+                fontName = null;
               }
             }
             fontName ||= baseFont;
@@ -11654,384 +12118,383 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
         }
         class EvaluatorPreprocessor {
           static get opMap() {
-            const getOPMap = (0, _core_utils.getLookupTableFactory)(function (t) {
-              t.w = {
+            return (0, _util.shadow)(this, "opMap", {
+              w: {
                 id: _util.OPS.setLineWidth,
                 numArgs: 1,
                 variableArgs: false
-              };
-              t.J = {
+              },
+              J: {
                 id: _util.OPS.setLineCap,
                 numArgs: 1,
                 variableArgs: false
-              };
-              t.j = {
+              },
+              j: {
                 id: _util.OPS.setLineJoin,
                 numArgs: 1,
                 variableArgs: false
-              };
-              t.M = {
+              },
+              M: {
                 id: _util.OPS.setMiterLimit,
                 numArgs: 1,
                 variableArgs: false
-              };
-              t.d = {
+              },
+              d: {
                 id: _util.OPS.setDash,
                 numArgs: 2,
                 variableArgs: false
-              };
-              t.ri = {
+              },
+              ri: {
                 id: _util.OPS.setRenderingIntent,
                 numArgs: 1,
                 variableArgs: false
-              };
-              t.i = {
+              },
+              i: {
                 id: _util.OPS.setFlatness,
                 numArgs: 1,
                 variableArgs: false
-              };
-              t.gs = {
+              },
+              gs: {
                 id: _util.OPS.setGState,
                 numArgs: 1,
                 variableArgs: false
-              };
-              t.q = {
+              },
+              q: {
                 id: _util.OPS.save,
                 numArgs: 0,
                 variableArgs: false
-              };
-              t.Q = {
+              },
+              Q: {
                 id: _util.OPS.restore,
                 numArgs: 0,
                 variableArgs: false
-              };
-              t.cm = {
+              },
+              cm: {
                 id: _util.OPS.transform,
                 numArgs: 6,
                 variableArgs: false
-              };
-              t.m = {
+              },
+              m: {
                 id: _util.OPS.moveTo,
                 numArgs: 2,
                 variableArgs: false
-              };
-              t.l = {
+              },
+              l: {
                 id: _util.OPS.lineTo,
                 numArgs: 2,
                 variableArgs: false
-              };
-              t.c = {
+              },
+              c: {
                 id: _util.OPS.curveTo,
                 numArgs: 6,
                 variableArgs: false
-              };
-              t.v = {
+              },
+              v: {
                 id: _util.OPS.curveTo2,
                 numArgs: 4,
                 variableArgs: false
-              };
-              t.y = {
+              },
+              y: {
                 id: _util.OPS.curveTo3,
                 numArgs: 4,
                 variableArgs: false
-              };
-              t.h = {
+              },
+              h: {
                 id: _util.OPS.closePath,
                 numArgs: 0,
                 variableArgs: false
-              };
-              t.re = {
+              },
+              re: {
                 id: _util.OPS.rectangle,
                 numArgs: 4,
                 variableArgs: false
-              };
-              t.S = {
+              },
+              S: {
                 id: _util.OPS.stroke,
                 numArgs: 0,
                 variableArgs: false
-              };
-              t.s = {
+              },
+              s: {
                 id: _util.OPS.closeStroke,
                 numArgs: 0,
                 variableArgs: false
-              };
-              t.f = {
+              },
+              f: {
                 id: _util.OPS.fill,
                 numArgs: 0,
                 variableArgs: false
-              };
-              t.F = {
+              },
+              F: {
                 id: _util.OPS.fill,
                 numArgs: 0,
                 variableArgs: false
-              };
-              t["f*"] = {
+              },
+              "f*": {
                 id: _util.OPS.eoFill,
                 numArgs: 0,
                 variableArgs: false
-              };
-              t.B = {
+              },
+              B: {
                 id: _util.OPS.fillStroke,
                 numArgs: 0,
                 variableArgs: false
-              };
-              t["B*"] = {
+              },
+              "B*": {
                 id: _util.OPS.eoFillStroke,
                 numArgs: 0,
                 variableArgs: false
-              };
-              t.b = {
+              },
+              b: {
                 id: _util.OPS.closeFillStroke,
                 numArgs: 0,
                 variableArgs: false
-              };
-              t["b*"] = {
+              },
+              "b*": {
                 id: _util.OPS.closeEOFillStroke,
                 numArgs: 0,
                 variableArgs: false
-              };
-              t.n = {
+              },
+              n: {
                 id: _util.OPS.endPath,
                 numArgs: 0,
                 variableArgs: false
-              };
-              t.W = {
+              },
+              W: {
                 id: _util.OPS.clip,
                 numArgs: 0,
                 variableArgs: false
-              };
-              t["W*"] = {
+              },
+              "W*": {
                 id: _util.OPS.eoClip,
                 numArgs: 0,
                 variableArgs: false
-              };
-              t.BT = {
+              },
+              BT: {
                 id: _util.OPS.beginText,
                 numArgs: 0,
                 variableArgs: false
-              };
-              t.ET = {
+              },
+              ET: {
                 id: _util.OPS.endText,
                 numArgs: 0,
                 variableArgs: false
-              };
-              t.Tc = {
+              },
+              Tc: {
                 id: _util.OPS.setCharSpacing,
                 numArgs: 1,
                 variableArgs: false
-              };
-              t.Tw = {
+              },
+              Tw: {
                 id: _util.OPS.setWordSpacing,
                 numArgs: 1,
                 variableArgs: false
-              };
-              t.Tz = {
+              },
+              Tz: {
                 id: _util.OPS.setHScale,
                 numArgs: 1,
                 variableArgs: false
-              };
-              t.TL = {
+              },
+              TL: {
                 id: _util.OPS.setLeading,
                 numArgs: 1,
                 variableArgs: false
-              };
-              t.Tf = {
+              },
+              Tf: {
                 id: _util.OPS.setFont,
                 numArgs: 2,
                 variableArgs: false
-              };
-              t.Tr = {
+              },
+              Tr: {
                 id: _util.OPS.setTextRenderingMode,
                 numArgs: 1,
                 variableArgs: false
-              };
-              t.Ts = {
+              },
+              Ts: {
                 id: _util.OPS.setTextRise,
                 numArgs: 1,
                 variableArgs: false
-              };
-              t.Td = {
+              },
+              Td: {
                 id: _util.OPS.moveText,
                 numArgs: 2,
                 variableArgs: false
-              };
-              t.TD = {
+              },
+              TD: {
                 id: _util.OPS.setLeadingMoveText,
                 numArgs: 2,
                 variableArgs: false
-              };
-              t.Tm = {
+              },
+              Tm: {
                 id: _util.OPS.setTextMatrix,
                 numArgs: 6,
                 variableArgs: false
-              };
-              t["T*"] = {
+              },
+              "T*": {
                 id: _util.OPS.nextLine,
                 numArgs: 0,
                 variableArgs: false
-              };
-              t.Tj = {
+              },
+              Tj: {
                 id: _util.OPS.showText,
                 numArgs: 1,
                 variableArgs: false
-              };
-              t.TJ = {
+              },
+              TJ: {
                 id: _util.OPS.showSpacedText,
                 numArgs: 1,
                 variableArgs: false
-              };
-              t["'"] = {
+              },
+              "'": {
                 id: _util.OPS.nextLineShowText,
                 numArgs: 1,
                 variableArgs: false
-              };
-              t['"'] = {
+              },
+              '"': {
                 id: _util.OPS.nextLineSetSpacingShowText,
                 numArgs: 3,
                 variableArgs: false
-              };
-              t.d0 = {
+              },
+              d0: {
                 id: _util.OPS.setCharWidth,
                 numArgs: 2,
                 variableArgs: false
-              };
-              t.d1 = {
+              },
+              d1: {
                 id: _util.OPS.setCharWidthAndBounds,
                 numArgs: 6,
                 variableArgs: false
-              };
-              t.CS = {
+              },
+              CS: {
                 id: _util.OPS.setStrokeColorSpace,
                 numArgs: 1,
                 variableArgs: false
-              };
-              t.cs = {
+              },
+              cs: {
                 id: _util.OPS.setFillColorSpace,
                 numArgs: 1,
                 variableArgs: false
-              };
-              t.SC = {
+              },
+              SC: {
                 id: _util.OPS.setStrokeColor,
                 numArgs: 4,
                 variableArgs: true
-              };
-              t.SCN = {
+              },
+              SCN: {
                 id: _util.OPS.setStrokeColorN,
                 numArgs: 33,
                 variableArgs: true
-              };
-              t.sc = {
+              },
+              sc: {
                 id: _util.OPS.setFillColor,
                 numArgs: 4,
                 variableArgs: true
-              };
-              t.scn = {
+              },
+              scn: {
                 id: _util.OPS.setFillColorN,
                 numArgs: 33,
                 variableArgs: true
-              };
-              t.G = {
+              },
+              G: {
                 id: _util.OPS.setStrokeGray,
                 numArgs: 1,
                 variableArgs: false
-              };
-              t.g = {
+              },
+              g: {
                 id: _util.OPS.setFillGray,
                 numArgs: 1,
                 variableArgs: false
-              };
-              t.RG = {
+              },
+              RG: {
                 id: _util.OPS.setStrokeRGBColor,
                 numArgs: 3,
                 variableArgs: false
-              };
-              t.rg = {
+              },
+              rg: {
                 id: _util.OPS.setFillRGBColor,
                 numArgs: 3,
                 variableArgs: false
-              };
-              t.K = {
+              },
+              K: {
                 id: _util.OPS.setStrokeCMYKColor,
                 numArgs: 4,
                 variableArgs: false
-              };
-              t.k = {
+              },
+              k: {
                 id: _util.OPS.setFillCMYKColor,
                 numArgs: 4,
                 variableArgs: false
-              };
-              t.sh = {
+              },
+              sh: {
                 id: _util.OPS.shadingFill,
                 numArgs: 1,
                 variableArgs: false
-              };
-              t.BI = {
+              },
+              BI: {
                 id: _util.OPS.beginInlineImage,
                 numArgs: 0,
                 variableArgs: false
-              };
-              t.ID = {
+              },
+              ID: {
                 id: _util.OPS.beginImageData,
                 numArgs: 0,
                 variableArgs: false
-              };
-              t.EI = {
+              },
+              EI: {
                 id: _util.OPS.endInlineImage,
                 numArgs: 1,
                 variableArgs: false
-              };
-              t.Do = {
+              },
+              Do: {
                 id: _util.OPS.paintXObject,
                 numArgs: 1,
                 variableArgs: false
-              };
-              t.MP = {
+              },
+              MP: {
                 id: _util.OPS.markPoint,
                 numArgs: 1,
                 variableArgs: false
-              };
-              t.DP = {
+              },
+              DP: {
                 id: _util.OPS.markPointProps,
                 numArgs: 2,
                 variableArgs: false
-              };
-              t.BMC = {
+              },
+              BMC: {
                 id: _util.OPS.beginMarkedContent,
                 numArgs: 1,
                 variableArgs: false
-              };
-              t.BDC = {
+              },
+              BDC: {
                 id: _util.OPS.beginMarkedContentProps,
                 numArgs: 2,
                 variableArgs: false
-              };
-              t.EMC = {
+              },
+              EMC: {
                 id: _util.OPS.endMarkedContent,
                 numArgs: 0,
                 variableArgs: false
-              };
-              t.BX = {
+              },
+              BX: {
                 id: _util.OPS.beginCompat,
                 numArgs: 0,
                 variableArgs: false
-              };
-              t.EX = {
+              },
+              EX: {
                 id: _util.OPS.endCompat,
                 numArgs: 0,
                 variableArgs: false
-              };
-              t.BM = null;
-              t.BD = null;
-              t.true = null;
-              t.fa = null;
-              t.fal = null;
-              t.fals = null;
-              t.false = null;
-              t.nu = null;
-              t.nul = null;
-              t.null = null;
+              },
+              BM: null,
+              BD: null,
+              true: null,
+              fa: null,
+              fal: null,
+              fals: null,
+              false: null,
+              nu: null,
+              nul: null,
+              null: null
             });
-            return (0, _util.shadow)(this, "opMap", getOPMap());
           }
           static MAX_INVALID_PATH_OPS = 10;
           constructor(stream, xref, stateManager = new StateManager()) {
@@ -13511,7 +13974,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             let ch = this.currentChar;
             let eNotation = false;
             let divideBy = 0;
-            let sign = 0;
+            let sign = 1;
             if (ch === 0x2d) {
               sign = -1;
               ch = this.nextChar();
@@ -13519,7 +13982,6 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 ch = this.nextChar();
               }
             } else if (ch === 0x2b) {
-              sign = 1;
               ch = this.nextChar();
             }
             if (ch === 0x0a || ch === 0x0d) {
@@ -13539,7 +14001,6 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               }
               throw new _util.FormatError(msg);
             }
-            sign ||= 1;
             let baseValue = ch - 0x30;
             let powerValue = 0;
             let powerValueSign = 1;
@@ -14587,11 +15048,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                   this.nextLine2D = !(code1 & 1);
                 }
               }
-              if (codingLine[0] > 0) {
-                this.outputBits = codingLine[this.codingPos = 0];
-              } else {
-                this.outputBits = codingLine[this.codingPos = 1];
-              }
+              this.outputBits = codingLine[0] > 0 ? codingLine[this.codingPos = 0] : codingLine[this.codingPos = 1];
               this.row++;
             }
             let c;
@@ -14727,11 +15184,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               if (code === ccittEOF) {
                 return 1;
               }
-              if (code >> 5 === 0) {
-                p = whiteTable1[code];
-              } else {
-                p = whiteTable2[code >> 3];
-              }
+              p = code >> 5 === 0 ? whiteTable1[code] : whiteTable2[code >> 3];
               if (p[0] > 0) {
                 this._eatBits(p[0]);
                 return p[1];
@@ -17595,12 +18048,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           }
           let mcu = 0,
             fileMarker;
-          let mcuExpected;
-          if (componentsLength === 1) {
-            mcuExpected = components[0].blocksPerLine * components[0].blocksPerColumn;
-          } else {
-            mcuExpected = mcusPerLine * frame.mcusPerColumn;
-          }
+          const mcuExpected = componentsLength === 1 ? components[0].blocksPerLine * components[0].blocksPerColumn : mcusPerLine * frame.mcusPerColumn;
           let h, v;
           while (mcu <= mcuExpected) {
             const mcuToRead = resetInterval ? Math.min(mcuExpected - mcu, resetInterval) : mcuExpected;
@@ -19727,11 +20175,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                   }
                   nb = bitsDecoded[position];
                   const pos = interleave ? levelOffset + (offset << 1) : offset;
-                  if (reversible && nb >= mb) {
-                    coefficients[pos] = n;
-                  } else {
-                    coefficients[pos] = n * (1 << mb - nb);
-                  }
+                  coefficients[pos] = reversible && nb >= mb ? n : n * (1 << mb - nb);
                 }
                 offset++;
                 position++;
@@ -20641,11 +21085,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             if (predictor !== 2 && (predictor < 10 || predictor > 15)) {
               throw new _util.FormatError(`Unsupported predictor: ${predictor}`);
             }
-            if (predictor === 2) {
-              this.readBlock = this.readBlockTiff;
-            } else {
-              this.readBlock = this.readBlockPng;
-            }
+            this.readBlock = predictor === 2 ? this.readBlockTiff : this.readBlockPng;
             this.str = str;
             this.dict = str.dict;
             const colors = this.colors = params.get("Colors") || 1;
@@ -21081,17 +21521,9 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
         }) {
           let fileType, fileSubtype;
           if (isTrueTypeFile(file) || isTrueTypeCollectionFile(file)) {
-            if (composite) {
-              fileType = "CIDFontType2";
-            } else {
-              fileType = "TrueType";
-            }
+            fileType = composite ? "CIDFontType2" : "TrueType";
           } else if (isOpenTypeFile(file)) {
-            if (composite) {
-              fileType = "CIDFontType2";
-            } else {
-              fileType = "OpenType";
-            }
+            fileType = composite ? "CIDFontType2" : "OpenType";
           } else if (isType1File(file)) {
             if (composite) {
               fileType = "CIDFontType0";
@@ -22984,7 +23416,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 cff.duplicateFirstGlyph();
                 const compiler = new _cff_parser.CFFCompiler(cff);
                 tables["CFF "].data = compiler.compile();
-              } catch (e) {
+              } catch {
                 (0, _util.warn)("Failed to compile font " + properties.loadedName);
               }
             }
@@ -23791,12 +24223,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 stackSize %= 2;
                 validationCommand = CharstringValidationData[value];
               } else if (value === 10 || value === 29) {
-                let subrsIndex;
-                if (value === 10) {
-                  subrsIndex = localSubrIndex;
-                } else {
-                  subrsIndex = globalSubrIndex;
-                }
+                const subrsIndex = value === 10 ? localSubrIndex : globalSubrIndex;
                 if (!subrsIndex) {
                   validationCommand = CharstringValidationData[value];
                   (0, _util.warn)("Missing subrsIndex for " + validationCommand.id);
@@ -24422,9 +24849,9 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               data: [],
               length: 0,
               add(data) {
-                if (data.length <= 65536) {
+                try {
                   this.data.push(...data);
-                } else {
+                } catch {
                   this.data = this.data.concat(data);
                 }
                 this.length = this.data.length;
@@ -24915,21 +25342,13 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             baseEncoding = builtInEncoding;
             for (charCode = 0; charCode < baseEncoding.length; charCode++) {
               glyphId = glyphNames.indexOf(baseEncoding[charCode]);
-              if (glyphId >= 0) {
-                charCodeToGlyphId[charCode] = glyphId;
-              } else {
-                charCodeToGlyphId[charCode] = 0;
-              }
+              charCodeToGlyphId[charCode] = glyphId >= 0 ? glyphId : 0;
             }
           } else if (properties.baseEncodingName) {
             baseEncoding = (0, _encodings.getEncoding)(properties.baseEncodingName);
             for (charCode = 0; charCode < baseEncoding.length; charCode++) {
               glyphId = glyphNames.indexOf(baseEncoding[charCode]);
-              if (glyphId >= 0) {
-                charCodeToGlyphId[charCode] = glyphId;
-              } else {
-                charCodeToGlyphId[charCode] = 0;
-              }
+              charCodeToGlyphId[charCode] = glyphId >= 0 ? glyphId : 0;
             }
           } else if (isSymbolicFont) {
             for (charCode in builtInEncoding) {
@@ -24939,11 +25358,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             baseEncoding = _encodings.StandardEncoding;
             for (charCode = 0; charCode < baseEncoding.length; charCode++) {
               glyphId = glyphNames.indexOf(baseEncoding[charCode]);
-              if (glyphId >= 0) {
-                charCodeToGlyphId[charCode] = glyphId;
-              } else {
-                charCodeToGlyphId[charCode] = 0;
-              }
+              charCodeToGlyphId[charCode] = glyphId >= 0 ? glyphId : 0;
             }
           }
           const differences = properties.differences;
@@ -24961,11 +25376,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                   glyphId = glyphNames.indexOf(standardGlyphName);
                 }
               }
-              if (glyphId >= 0) {
-                charCodeToGlyphId[charCode] = glyphId;
-              } else {
-                charCodeToGlyphId[charCode] = 0;
-              }
+              charCodeToGlyphId[charCode] = glyphId >= 0 ? glyphId : 0;
             }
           }
           return charCodeToGlyphId;
@@ -24977,17 +25388,16 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
         /***/
 }),
 /* 39 */
-/***/ ((__unused_webpack_module, __webpack_exports__, __w_pdfjs_require__) => {
+/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
-        __w_pdfjs_require__.r(__webpack_exports__);
-/* harmony export */ __w_pdfjs_require__.d(__webpack_exports__, {
-/* harmony export */   getDingbatsGlyphsUnicode: () => (/* binding */ getDingbatsGlyphsUnicode),
-/* harmony export */   getGlyphsUnicode: () => (/* binding */ getGlyphsUnicode)
-          /* harmony export */
-});
-/* harmony import */ var _core_utils_js__WEBPACK_IMPORTED_MODULE_0__ = __w_pdfjs_require__(3);
 
-        const getGlyphsUnicode = (0, _core_utils_js__WEBPACK_IMPORTED_MODULE_0__.getLookupTableFactory)(function (t) {
+
+        Object.defineProperty(exports, "__esModule", ({
+          value: true
+        }));
+        exports.getGlyphsUnicode = exports.getDingbatsGlyphsUnicode = void 0;
+        var _core_utils = __w_pdfjs_require__(3);
+        const getGlyphsUnicode = (0, _core_utils.getLookupTableFactory)(function (t) {
           t.A = 0x0041;
           t.AE = 0x00c6;
           t.AEacute = 0x01fc;
@@ -28040,6 +28450,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           t.pikatakana = 0x30d4;
           t.pisymbolgreek = 0x03d6;
           t.piwrarmenian = 0x0583;
+          t.planckover2pi = 0x210f;
+          t.planckover2pi1 = 0x210f;
           t.plus = 0x002b;
           t.plusbelowcmb = 0x031f;
           t.pluscircle = 0x2295;
@@ -29315,7 +29727,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           t.vextenddouble = 0x2225;
           t.vextendsingle = 0x2223;
         });
-        const getDingbatsGlyphsUnicode = (0, _core_utils_js__WEBPACK_IMPORTED_MODULE_0__.getLookupTableFactory)(function (t) {
+        exports.getGlyphsUnicode = getGlyphsUnicode;
+        const getDingbatsGlyphsUnicode = (0, _core_utils.getLookupTableFactory)(function (t) {
           t.space = 0x0020;
           t.a1 = 0x2701;
           t.a2 = 0x2702;
@@ -29520,25 +29933,25 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           t.a96 = 0x2775;
           t[".notdef"] = 0x0000;
         });
-
+        exports.getDingbatsGlyphsUnicode = getDingbatsGlyphsUnicode;
 
         /***/
 }),
 /* 40 */
-/***/ ((__unused_webpack_module, __webpack_exports__, __w_pdfjs_require__) => {
+/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
-        __w_pdfjs_require__.r(__webpack_exports__);
-/* harmony export */ __w_pdfjs_require__.d(__webpack_exports__, {
-/* harmony export */   clearUnicodeCaches: () => (/* binding */ clearUnicodeCaches),
-/* harmony export */   getCharUnicodeCategory: () => (/* binding */ getCharUnicodeCategory),
-/* harmony export */   getUnicodeForGlyph: () => (/* binding */ getUnicodeForGlyph),
-/* harmony export */   getUnicodeRangeFor: () => (/* binding */ getUnicodeRangeFor),
-/* harmony export */   mapSpecialUnicodeValues: () => (/* binding */ mapSpecialUnicodeValues)
-          /* harmony export */
-});
-/* harmony import */ var _core_utils_js__WEBPACK_IMPORTED_MODULE_0__ = __w_pdfjs_require__(3);
 
-        const getSpecialPUASymbols = (0, _core_utils_js__WEBPACK_IMPORTED_MODULE_0__.getLookupTableFactory)(function (t) {
+
+        Object.defineProperty(exports, "__esModule", ({
+          value: true
+        }));
+        exports.clearUnicodeCaches = clearUnicodeCaches;
+        exports.getCharUnicodeCategory = getCharUnicodeCategory;
+        exports.getUnicodeForGlyph = getUnicodeForGlyph;
+        exports.getUnicodeRangeFor = getUnicodeRangeFor;
+        exports.mapSpecialUnicodeValues = mapSpecialUnicodeValues;
+        var _core_utils = __w_pdfjs_require__(3);
+        const getSpecialPUASymbols = (0, _core_utils.getLookupTableFactory)(function (t) {
           t[63721] = 0x00a9;
           t[63193] = 0x00a9;
           t[63720] = 0x00ae;
@@ -29601,584 +30014,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           }
           return -1;
         }
-        const UnicodeRanges = [
-          [
-            0x0000,
-            0x007f
-          ],
-          [
-            0x0080,
-            0x00ff
-          ],
-          [
-            0x0100,
-            0x017f
-          ],
-          [
-            0x0180,
-            0x024f
-          ],
-          [
-            0x0250,
-            0x02af,
-            0x1d00,
-            0x1d7f,
-            0x1d80,
-            0x1dbf
-          ],
-          [
-            0x02b0,
-            0x02ff,
-            0xa700,
-            0xa71f
-          ],
-          [
-            0x0300,
-            0x036f,
-            0x1dc0,
-            0x1dff
-          ],
-          [
-            0x0370,
-            0x03ff
-          ],
-          [
-            0x2c80,
-            0x2cff
-          ],
-          [
-            0x0400,
-            0x04ff,
-            0x0500,
-            0x052f,
-            0x2de0,
-            0x2dff,
-            0xa640,
-            0xa69f
-          ],
-          [
-            0x0530,
-            0x058f
-          ],
-          [
-            0x0590,
-            0x05ff
-          ],
-          [
-            0xa500,
-            0xa63f
-          ],
-          [
-            0x0600,
-            0x06ff,
-            0x0750,
-            0x077f
-          ],
-          [
-            0x07c0,
-            0x07ff
-          ],
-          [
-            0x0900,
-            0x097f
-          ],
-          [
-            0x0980,
-            0x09ff
-          ],
-          [
-            0x0a00,
-            0x0a7f
-          ],
-          [
-            0x0a80,
-            0x0aff
-          ],
-          [
-            0x0b00,
-            0x0b7f
-          ],
-          [
-            0x0b80,
-            0x0bff
-          ],
-          [
-            0x0c00,
-            0x0c7f
-          ],
-          [
-            0x0c80,
-            0x0cff
-          ],
-          [
-            0x0d00,
-            0x0d7f
-          ],
-          [
-            0x0e00,
-            0x0e7f
-          ],
-          [
-            0x0e80,
-            0x0eff
-          ],
-          [
-            0x10a0,
-            0x10ff,
-            0x2d00,
-            0x2d2f
-          ],
-          [
-            0x1b00,
-            0x1b7f
-          ],
-          [
-            0x1100,
-            0x11ff
-          ],
-          [
-            0x1e00,
-            0x1eff,
-            0x2c60,
-            0x2c7f,
-            0xa720,
-            0xa7ff
-          ],
-          [
-            0x1f00,
-            0x1fff
-          ],
-          [
-            0x2000,
-            0x206f,
-            0x2e00,
-            0x2e7f
-          ],
-          [
-            0x2070,
-            0x209f
-          ],
-          [
-            0x20a0,
-            0x20cf
-          ],
-          [
-            0x20d0,
-            0x20ff
-          ],
-          [
-            0x2100,
-            0x214f
-          ],
-          [
-            0x2150,
-            0x218f
-          ],
-          [
-            0x2190,
-            0x21ff,
-            0x27f0,
-            0x27ff,
-            0x2900,
-            0x297f,
-            0x2b00,
-            0x2bff
-          ],
-          [
-            0x2200,
-            0x22ff,
-            0x2a00,
-            0x2aff,
-            0x27c0,
-            0x27ef,
-            0x2980,
-            0x29ff
-          ],
-          [
-            0x2300,
-            0x23ff
-          ],
-          [
-            0x2400,
-            0x243f
-          ],
-          [
-            0x2440,
-            0x245f
-          ],
-          [
-            0x2460,
-            0x24ff
-          ],
-          [
-            0x2500,
-            0x257f
-          ],
-          [
-            0x2580,
-            0x259f
-          ],
-          [
-            0x25a0,
-            0x25ff
-          ],
-          [
-            0x2600,
-            0x26ff
-          ],
-          [
-            0x2700,
-            0x27bf
-          ],
-          [
-            0x3000,
-            0x303f
-          ],
-          [
-            0x3040,
-            0x309f
-          ],
-          [
-            0x30a0,
-            0x30ff,
-            0x31f0,
-            0x31ff
-          ],
-          [
-            0x3100,
-            0x312f,
-            0x31a0,
-            0x31bf
-          ],
-          [
-            0x3130,
-            0x318f
-          ],
-          [
-            0xa840,
-            0xa87f
-          ],
-          [
-            0x3200,
-            0x32ff
-          ],
-          [
-            0x3300,
-            0x33ff
-          ],
-          [
-            0xac00,
-            0xd7af
-          ],
-          [
-            0xd800,
-            0xdfff
-          ],
-          [
-            0x10900,
-            0x1091f
-          ],
-          [
-            0x4e00,
-            0x9fff,
-            0x2e80,
-            0x2eff,
-            0x2f00,
-            0x2fdf,
-            0x2ff0,
-            0x2fff,
-            0x3400,
-            0x4dbf,
-            0x20000,
-            0x2a6df,
-            0x3190,
-            0x319f
-          ],
-          [
-            0xe000,
-            0xf8ff
-          ],
-          [
-            0x31c0,
-            0x31ef,
-            0xf900,
-            0xfaff,
-            0x2f800,
-            0x2fa1f
-          ],
-          [
-            0xfb00,
-            0xfb4f
-          ],
-          [
-            0xfb50,
-            0xfdff
-          ],
-          [
-            0xfe20,
-            0xfe2f
-          ],
-          [
-            0xfe10,
-            0xfe1f
-          ],
-          [
-            0xfe50,
-            0xfe6f
-          ],
-          [
-            0xfe70,
-            0xfeff
-          ],
-          [
-            0xff00,
-            0xffef
-          ],
-          [
-            0xfff0,
-            0xffff
-          ],
-          [
-            0x0f00,
-            0x0fff
-          ],
-          [
-            0x0700,
-            0x074f
-          ],
-          [
-            0x0780,
-            0x07bf
-          ],
-          [
-            0x0d80,
-            0x0dff
-          ],
-          [
-            0x1000,
-            0x109f
-          ],
-          [
-            0x1200,
-            0x137f,
-            0x1380,
-            0x139f,
-            0x2d80,
-            0x2ddf
-          ],
-          [
-            0x13a0,
-            0x13ff
-          ],
-          [
-            0x1400,
-            0x167f
-          ],
-          [
-            0x1680,
-            0x169f
-          ],
-          [
-            0x16a0,
-            0x16ff
-          ],
-          [
-            0x1780,
-            0x17ff
-          ],
-          [
-            0x1800,
-            0x18af
-          ],
-          [
-            0x2800,
-            0x28ff
-          ],
-          [
-            0xa000,
-            0xa48f
-          ],
-          [
-            0x1700,
-            0x171f,
-            0x1720,
-            0x173f,
-            0x1740,
-            0x175f,
-            0x1760,
-            0x177f
-          ],
-          [
-            0x10300,
-            0x1032f
-          ],
-          [
-            0x10330,
-            0x1034f
-          ],
-          [
-            0x10400,
-            0x1044f
-          ],
-          [
-            0x1d000,
-            0x1d0ff,
-            0x1d100,
-            0x1d1ff,
-            0x1d200,
-            0x1d24f
-          ],
-          [
-            0x1d400,
-            0x1d7ff
-          ],
-          [
-            0xff000,
-            0xffffd
-          ],
-          [
-            0xfe00,
-            0xfe0f,
-            0xe0100,
-            0xe01ef
-          ],
-          [
-            0xe0000,
-            0xe007f
-          ],
-          [
-            0x1900,
-            0x194f
-          ],
-          [
-            0x1950,
-            0x197f
-          ],
-          [
-            0x1980,
-            0x19df
-          ],
-          [
-            0x1a00,
-            0x1a1f
-          ],
-          [
-            0x2c00,
-            0x2c5f
-          ],
-          [
-            0x2d30,
-            0x2d7f
-          ],
-          [
-            0x4dc0,
-            0x4dff
-          ],
-          [
-            0xa800,
-            0xa82f
-          ],
-          [
-            0x10000,
-            0x1007f,
-            0x10080,
-            0x100ff,
-            0x10100,
-            0x1013f
-          ],
-          [
-            0x10140,
-            0x1018f
-          ],
-          [
-            0x10380,
-            0x1039f
-          ],
-          [
-            0x103a0,
-            0x103df
-          ],
-          [
-            0x10450,
-            0x1047f
-          ],
-          [
-            0x10480,
-            0x104af
-          ],
-          [
-            0x10800,
-            0x1083f
-          ],
-          [
-            0x10a00,
-            0x10a5f
-          ],
-          [
-            0x1d300,
-            0x1d35f
-          ],
-          [
-            0x12000,
-            0x123ff,
-            0x12400,
-            0x1247f
-          ],
-          [
-            0x1d360,
-            0x1d37f
-          ],
-          [
-            0x1b80,
-            0x1bbf
-          ],
-          [
-            0x1c00,
-            0x1c4f
-          ],
-          [
-            0x1c50,
-            0x1c7f
-          ],
-          [
-            0xa880,
-            0xa8df
-          ],
-          [
-            0xa900,
-            0xa92f
-          ],
-          [
-            0xa930,
-            0xa95f
-          ],
-          [
-            0xaa00,
-            0xaa5f
-          ],
-          [
-            0x10190,
-            0x101cf
-          ],
-          [
-            0x101d0,
-            0x101ff
-          ],
-          [
-            0x102a0,
-            0x102df,
-            0x10280,
-            0x1029f,
-            0x10920,
-            0x1093f
-          ],
-          [
-            0x1f030,
-            0x1f09f,
-            0x1f000,
-            0x1f02f
-          ]
-        ];
+        const UnicodeRanges = [[0x0000, 0x007f], [0x0080, 0x00ff], [0x0100, 0x017f], [0x0180, 0x024f], [0x0250, 0x02af, 0x1d00, 0x1d7f, 0x1d80, 0x1dbf], [0x02b0, 0x02ff, 0xa700, 0xa71f], [0x0300, 0x036f, 0x1dc0, 0x1dff], [0x0370, 0x03ff], [0x2c80, 0x2cff], [0x0400, 0x04ff, 0x0500, 0x052f, 0x2de0, 0x2dff, 0xa640, 0xa69f], [0x0530, 0x058f], [0x0590, 0x05ff], [0xa500, 0xa63f], [0x0600, 0x06ff, 0x0750, 0x077f], [0x07c0, 0x07ff], [0x0900, 0x097f], [0x0980, 0x09ff], [0x0a00, 0x0a7f], [0x0a80, 0x0aff], [0x0b00, 0x0b7f], [0x0b80, 0x0bff], [0x0c00, 0x0c7f], [0x0c80, 0x0cff], [0x0d00, 0x0d7f], [0x0e00, 0x0e7f], [0x0e80, 0x0eff], [0x10a0, 0x10ff, 0x2d00, 0x2d2f], [0x1b00, 0x1b7f], [0x1100, 0x11ff], [0x1e00, 0x1eff, 0x2c60, 0x2c7f, 0xa720, 0xa7ff], [0x1f00, 0x1fff], [0x2000, 0x206f, 0x2e00, 0x2e7f], [0x2070, 0x209f], [0x20a0, 0x20cf], [0x20d0, 0x20ff], [0x2100, 0x214f], [0x2150, 0x218f], [0x2190, 0x21ff, 0x27f0, 0x27ff, 0x2900, 0x297f, 0x2b00, 0x2bff], [0x2200, 0x22ff, 0x2a00, 0x2aff, 0x27c0, 0x27ef, 0x2980, 0x29ff], [0x2300, 0x23ff], [0x2400, 0x243f], [0x2440, 0x245f], [0x2460, 0x24ff], [0x2500, 0x257f], [0x2580, 0x259f], [0x25a0, 0x25ff], [0x2600, 0x26ff], [0x2700, 0x27bf], [0x3000, 0x303f], [0x3040, 0x309f], [0x30a0, 0x30ff, 0x31f0, 0x31ff], [0x3100, 0x312f, 0x31a0, 0x31bf], [0x3130, 0x318f], [0xa840, 0xa87f], [0x3200, 0x32ff], [0x3300, 0x33ff], [0xac00, 0xd7af], [0xd800, 0xdfff], [0x10900, 0x1091f], [0x4e00, 0x9fff, 0x2e80, 0x2eff, 0x2f00, 0x2fdf, 0x2ff0, 0x2fff, 0x3400, 0x4dbf, 0x20000, 0x2a6df, 0x3190, 0x319f], [0xe000, 0xf8ff], [0x31c0, 0x31ef, 0xf900, 0xfaff, 0x2f800, 0x2fa1f], [0xfb00, 0xfb4f], [0xfb50, 0xfdff], [0xfe20, 0xfe2f], [0xfe10, 0xfe1f], [0xfe50, 0xfe6f], [0xfe70, 0xfeff], [0xff00, 0xffef], [0xfff0, 0xffff], [0x0f00, 0x0fff], [0x0700, 0x074f], [0x0780, 0x07bf], [0x0d80, 0x0dff], [0x1000, 0x109f], [0x1200, 0x137f, 0x1380, 0x139f, 0x2d80, 0x2ddf], [0x13a0, 0x13ff], [0x1400, 0x167f], [0x1680, 0x169f], [0x16a0, 0x16ff], [0x1780, 0x17ff], [0x1800, 0x18af], [0x2800, 0x28ff], [0xa000, 0xa48f], [0x1700, 0x171f, 0x1720, 0x173f, 0x1740, 0x175f, 0x1760, 0x177f], [0x10300, 0x1032f], [0x10330, 0x1034f], [0x10400, 0x1044f], [0x1d000, 0x1d0ff, 0x1d100, 0x1d1ff, 0x1d200, 0x1d24f], [0x1d400, 0x1d7ff], [0xff000, 0xffffd], [0xfe00, 0xfe0f, 0xe0100, 0xe01ef], [0xe0000, 0xe007f], [0x1900, 0x194f], [0x1950, 0x197f], [0x1980, 0x19df], [0x1a00, 0x1a1f], [0x2c00, 0x2c5f], [0x2d30, 0x2d7f], [0x4dc0, 0x4dff], [0xa800, 0xa82f], [0x10000, 0x1007f, 0x10080, 0x100ff, 0x10100, 0x1013f], [0x10140, 0x1018f], [0x10380, 0x1039f], [0x103a0, 0x103df], [0x10450, 0x1047f], [0x10480, 0x104af], [0x10800, 0x1083f], [0x10a00, 0x10a5f], [0x1d300, 0x1d35f], [0x12000, 0x123ff, 0x12400, 0x1247f], [0x1d360, 0x1d37f], [0x1b80, 0x1bbf], [0x1c00, 0x1c4f], [0x1c50, 0x1c7f], [0xa880, 0xa8df], [0xa900, 0xa92f], [0xa930, 0xa95f], [0xaa00, 0xaa5f], [0x10190, 0x101cf], [0x101d0, 0x101ff], [0x102a0, 0x102df, 0x10280, 0x1029f, 0x10920, 0x1093f], [0x1f030, 0x1f09f, 0x1f000, 0x1f02f]];
         function getUnicodeRangeFor(value, lastPosition = -1) {
           if (lastPosition !== -1) {
             const range = UnicodeRanges[lastPosition];
@@ -30218,7 +30054,6 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           CategoryCache.clear();
         }
 
-
         /***/
 }),
 /* 41 */
@@ -30232,6 +30067,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
         exports.getSerifFonts = exports.getNonStdFontMap = exports.getGlyphMapForStandardFonts = exports.getFontNameToFileMap = void 0;
         exports.getStandardFontName = getStandardFontName;
         exports.getSymbolsFonts = exports.getSupplementalGlyphMapForCalibri = exports.getSupplementalGlyphMapForArialBlack = exports.getStdFontMap = void 0;
+        exports.isKnownFontName = isKnownFontName;
         var _core_utils = __w_pdfjs_require__(3);
         var _fonts_utils = __w_pdfjs_require__(38);
         const getStdFontMap = (0, _core_utils.getLookupTableFactory)(function (t) {
@@ -30515,6 +30351,9 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           t.Dingbats = true;
           t.Symbol = true;
           t.ZapfDingbats = true;
+          t.Wingdings = true;
+          t["Wingdings-Bold"] = true;
+          t["Wingdings-Regular"] = true;
         });
         exports.getSymbolsFonts = getSymbolsFonts;
         const getGlyphMapForStandardFonts = (0, _core_utils.getLookupTableFactory)(function (t) {
@@ -31082,6 +30921,10 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           const stdFontMap = getStdFontMap();
           return stdFontMap[fontName];
         }
+        function isKnownFontName(name) {
+          const fontName = (0, _fonts_utils.normalizeFontName)(name);
+          return !!(getStdFontMap()[fontName] || getNonStdFontMap()[fontName] || getSerifFonts()[fontName] || getSymbolsFonts()[fontName]);
+        }
 
         /***/
 }),
@@ -31187,7 +31030,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.seacs = this.cff.seacs;
             try {
               this.data = compiler.compile();
-            } catch (e) {
+            } catch {
               (0, _util.warn)("Failed to compile font " + properties.loadedName);
               this.data = file;
             }
@@ -31459,14 +31302,12 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                   arg2 = getUint16(code, i + 2);
                 }
                 i += 4;
+              } else if (flags & 0x02) {
+                arg1 = getInt8(code, i++);
+                arg2 = getInt8(code, i++);
               } else {
-                if (flags & 0x02) {
-                  arg1 = getInt8(code, i++);
-                  arg2 = getInt8(code, i++);
-                } else {
-                  arg1 = code[i++];
-                  arg2 = code[i++];
-                }
+                arg1 = code[i++];
+                arg2 = code[i++];
               }
               if (flags & 0x02) {
                 x = arg1;
@@ -35631,10 +35472,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               if (!(this.argument1 >= -128 && this.argument1 <= 127 && this.argument2 >= -128 && this.argument2 <= 127)) {
                 size += 2;
               }
-            } else {
-              if (!(this.argument1 >= 0 && this.argument1 <= 255 && this.argument2 >= 0 && this.argument2 <= 255)) {
-                size += 2;
-              }
+            } else if (!(this.argument1 >= 0 && this.argument1 <= 255 && this.argument2 >= 0 && this.argument2 <= 255)) {
+              size += 2;
             }
             return size;
           }
@@ -35644,10 +35483,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               if (!(this.argument1 >= -128 && this.argument1 <= 127 && this.argument2 >= -128 && this.argument2 <= 127)) {
                 this.flags |= ARG_1_AND_2_ARE_WORDS;
               }
-            } else {
-              if (!(this.argument1 >= 0 && this.argument1 <= 255 && this.argument2 >= 0 && this.argument2 <= 255)) {
-                this.flags |= ARG_1_AND_2_ARE_WORDS;
-              }
+            } else if (!(this.argument1 >= 0 && this.argument1 <= 255 && this.argument2 >= 0 && this.argument2 <= 255)) {
+              this.flags |= ARG_1_AND_2_ARE_WORDS;
             }
             buf.setUint16(pos, this.flags);
             buf.setUint16(pos + 2, this.glyphIndex);
@@ -35846,7 +35683,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           try {
             headerBytes = stream.getBytes(suggestedLength);
             headerBytesLength = headerBytes.length;
-          } catch (ex) { }
+          } catch { }
           if (headerBytesLength === suggestedLength) {
             block = findBlock(headerBytes, EEXEC_SIGNATURE, suggestedLength - 2 * EEXEC_SIGNATURE.length);
             if (block.found && block.length === suggestedLength) {
@@ -36670,6 +36507,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           value: true
         }));
         exports.Pattern = void 0;
+        exports.clearPatternCaches = clearPatternCaches;
         exports.getTilingPatternIR = getTilingPatternIR;
         var _util = __w_pdfjs_require__(2);
         var _base_stream = __w_pdfjs_require__(5);
@@ -36738,11 +36576,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               localColorSpaceCache
             });
             const bbox = dict.getArray("BBox");
-            if (Array.isArray(bbox) && bbox.length === 4) {
-              this.bbox = _util.Util.normalizeRect(bbox);
-            } else {
-              this.bbox = null;
-            }
+            this.bbox = Array.isArray(bbox) && bbox.length === 4 ? _util.Util.normalizeRect(bbox) : null;
             let t0 = 0.0,
               t1 = 1.0;
             if (dict.has("Domain")) {
@@ -36942,21 +36776,22 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             return this.context.colorSpace.getRgb(color, 0);
           }
         }
-        const getB = function getBClosure() {
-          function buildB(count) {
-            const lut = [];
-            for (let i = 0; i <= count; i++) {
-              const t = i / count,
-                t_ = 1 - t;
-              lut.push(new Float32Array([t_ * t_ * t_, 3 * t * t_ * t_, 3 * t * t * t_, t * t * t]));
-            }
-            return lut;
+        let bCache = Object.create(null);
+        function buildB(count) {
+          const lut = [];
+          for (let i = 0; i <= count; i++) {
+            const t = i / count,
+              t_ = 1 - t;
+            lut.push(new Float32Array([t_ ** 3, 3 * t * t_ ** 2, 3 * t ** 2 * t_, t ** 3]));
           }
-          const cache = Object.create(null);
-          return function (count) {
-            return cache[count] ||= buildB(count);
-          };
-        }();
+          return lut;
+        }
+        function getB(count) {
+          return bCache[count] ||= buildB(count);
+        }
+        function clearPatternCaches() {
+          bCache = Object.create(null);
+        }
         class MeshShading extends BaseShading {
           static MIN_SPLIT_PATCH_CHUNKS_AMOUNT = 3;
           static MAX_SPLIT_PATCH_CHUNKS_AMOUNT = 20;
@@ -36969,11 +36804,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             const dict = stream.dict;
             this.shadingType = dict.get("ShadingType");
             const bbox = dict.getArray("BBox");
-            if (Array.isArray(bbox) && bbox.length === 4) {
-              this.bbox = _util.Util.normalizeRect(bbox);
-            } else {
-              this.bbox = null;
-            }
+            this.bbox = Array.isArray(bbox) && bbox.length === 4 ? _util.Util.normalizeRect(bbox) : null;
             const cs = _colorspace.ColorSpace.parse({
               cs: dict.getRaw("CS") || dict.getRaw("ColorSpace"),
               xref,
@@ -37640,12 +37471,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             baseMapping,
             factors
           } = info;
-          let rescaledBaseWidths;
-          if (!factors) {
-            rescaledBaseWidths = baseWidths;
-          } else {
-            rescaledBaseWidths = baseWidths.map((w, i) => w * factors[i]);
-          }
+          const rescaledBaseWidths = !factors ? baseWidths : baseWidths.map((w, i) => w * factors[i]);
           let currentCode = -2;
           let currentArray;
           const newWidths = [];
@@ -38112,11 +37938,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               encode = toMultiArray(encode);
             }
             let decode = toNumberArray(dict.getArray("Decode"));
-            if (!decode) {
-              decode = range;
-            } else {
-              decode = toMultiArray(decode);
-            }
+            decode = !decode ? range : toMultiArray(decode);
             const samples = this.getSampleArray(size, outputSize, bps, fn);
             return function constructSampledFn(src, srcOffset, dest, destOffset) {
               const cubeVertices = 1 << inputSize;
@@ -38508,7 +38330,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                   break;
                 case "log":
                   a = stack.pop();
-                  stack.push(Math.log(a) / Math.LN10);
+                  stack.push(Math.log10(a));
                   break;
                 case "lt":
                   b = stack.pop();
@@ -39574,10 +39396,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               } else if (t === "AN" || t === "EN") {
                 levels[i] += 2;
               }
-            } else {
-              if (t === "L" || t === "AN" || t === "EN") {
-                levels[i] += 1;
-              }
+            } else if (t === "L" || t === "AN" || t === "EN") {
+              levels[i] += 1;
             }
           }
           let highestLevel = -1;
@@ -39951,7 +39771,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               const opacity = ctx.getImageData(0, 0, 1, 1).data[3];
               canvas.width = canvas.height = 1;
               return opacity !== 0;
-            } catch (e) {
+            } catch {
               return false;
             }
           }
@@ -40665,11 +40485,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this._streamSink = streamSink;
             this.fnArray = [];
             this.argsArray = [];
-            if (streamSink && !(intent & _util.RenderingIntentFlag.OPLIST)) {
-              this.optimizer = new QueueOptimizer(this);
-            } else {
-              this.optimizer = new NullOptimizer(this);
-            }
+            this.optimizer = streamSink && !(intent & _util.RenderingIntentFlag.OPLIST) ? new QueueOptimizer(this) : new NullOptimizer(this);
             this.dependencies = new Set();
             this._totalLength = 0;
             this.weight = 0;
@@ -41538,2148 +41354,18 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
         Object.defineProperty(exports, "__esModule", ({
           value: true
         }));
-        exports.incrementalUpdate = incrementalUpdate;
-        exports.writeDict = writeDict;
-        exports.writeObject = writeObject;
-        var _util = __w_pdfjs_require__(2);
-        var _primitives = __w_pdfjs_require__(4);
-        var _core_utils = __w_pdfjs_require__(3);
-        var _xml_parser = __w_pdfjs_require__(67);
-        var _base_stream = __w_pdfjs_require__(5);
-        var _crypto = __w_pdfjs_require__(68);
-        async function writeObject(ref, obj, buffer, transform) {
-          buffer.push(`${ref.num} ${ref.gen} obj\n`);
-          if (obj instanceof _primitives.Dict) {
-            await writeDict(obj, buffer, transform);
-          } else if (obj instanceof _base_stream.BaseStream) {
-            await writeStream(obj, buffer, transform);
-          }
-          buffer.push("\nendobj\n");
-        }
-        async function writeDict(dict, buffer, transform) {
-          buffer.push("<<");
-          for (const key of dict.getKeys()) {
-            buffer.push(` /${(0, _core_utils.escapePDFName)(key)} `);
-            await writeValue(dict.getRaw(key), buffer, transform);
-          }
-          buffer.push(">>");
-        }
-        async function writeStream(stream, buffer, transform) {
-          let string = stream.getString();
-          if (transform !== null) {
-            string = transform.encryptString(string);
-          }
-          if (typeof CompressionStream === "undefined") {
-            stream.dict.set("Length", string.length);
-            await writeDict(stream.dict, buffer, transform);
-            buffer.push(" stream\n", string, "\nendstream");
-            return;
-          }
-          const filter = await stream.dict.getAsync("Filter");
-          const flateDecode = _primitives.Name.get("FlateDecode");
-          const MIN_LENGTH_FOR_COMPRESSING = 256;
-          if (string.length >= MIN_LENGTH_FOR_COMPRESSING || Array.isArray(filter) && filter.includes(flateDecode) || filter instanceof _primitives.Name && filter.name === flateDecode.name) {
-            try {
-              const byteArray = (0, _util.stringToBytes)(string);
-              const cs = new CompressionStream("deflate");
-              const writer = cs.writable.getWriter();
-              writer.write(byteArray);
-              writer.close();
-              const buf = await new Response(cs.readable).arrayBuffer();
-              string = (0, _util.bytesToString)(new Uint8Array(buf));
-              if (Array.isArray(filter)) {
-                if (!filter.includes(flateDecode)) {
-                  filter.push(flateDecode);
-                }
-              } else if (!filter) {
-                stream.dict.set("Filter", flateDecode);
-              } else if (!(filter instanceof _primitives.Name) || filter.name !== flateDecode.name) {
-                stream.dict.set("Filter", [filter, flateDecode]);
-              }
-            } catch (ex) {
-              (0, _util.info)(`writeStream - cannot compress data: "${ex}".`);
-            }
-          }
-          stream.dict.set("Length", string.length);
-          await writeDict(stream.dict, buffer, transform);
-          buffer.push(" stream\n", string, "\nendstream");
-        }
-        async function writeArray(array, buffer, transform) {
-          buffer.push("[");
-          let first = true;
-          for (const val of array) {
-            if (!first) {
-              buffer.push(" ");
-            } else {
-              first = false;
-            }
-            await writeValue(val, buffer, transform);
-          }
-          buffer.push("]");
-        }
-        async function writeValue(value, buffer, transform) {
-          if (value instanceof _primitives.Name) {
-            buffer.push(`/${(0, _core_utils.escapePDFName)(value.name)}`);
-          } else if (value instanceof _primitives.Ref) {
-            buffer.push(`${value.num} ${value.gen} R`);
-          } else if (Array.isArray(value)) {
-            await writeArray(value, buffer, transform);
-          } else if (typeof value === "string") {
-            if (transform !== null) {
-              value = transform.encryptString(value);
-            }
-            buffer.push(`(${(0, _core_utils.escapeString)(value)})`);
-          } else if (typeof value === "number") {
-            buffer.push((0, _core_utils.numberToString)(value));
-          } else if (typeof value === "boolean") {
-            buffer.push(value.toString());
-          } else if (value instanceof _primitives.Dict) {
-            await writeDict(value, buffer, transform);
-          } else if (value instanceof _base_stream.BaseStream) {
-            await writeStream(value, buffer, transform);
-          } else if (value === null) {
-            buffer.push("null");
-          } else {
-            (0, _util.warn)(`Unhandled value in writer: ${typeof value}, please file a bug.`);
-          }
-        }
-        function writeInt(number, size, offset, buffer) {
-          for (let i = size + offset - 1; i > offset - 1; i--) {
-            buffer[i] = number & 0xff;
-            number >>= 8;
-          }
-          return offset + size;
-        }
-        function writeString(string, offset, buffer) {
-          for (let i = 0, len = string.length; i < len; i++) {
-            buffer[offset + i] = string.charCodeAt(i) & 0xff;
-          }
-        }
-        function computeMD5(filesize, xrefInfo) {
-          const time = Math.floor(Date.now() / 1000);
-          const filename = xrefInfo.filename || "";
-          const md5Buffer = [time.toString(), filename, filesize.toString()];
-          let md5BufferLen = md5Buffer.reduce((a, str) => a + str.length, 0);
-          for (const value of Object.values(xrefInfo.info)) {
-            md5Buffer.push(value);
-            md5BufferLen += value.length;
-          }
-          const array = new Uint8Array(md5BufferLen);
-          let offset = 0;
-          for (const str of md5Buffer) {
-            writeString(str, offset, array);
-            offset += str.length;
-          }
-          return (0, _util.bytesToString)((0, _crypto.calculateMD5)(array));
-        }
-        function writeXFADataForAcroform(str, newRefs) {
-          const xml = new _xml_parser.SimpleXMLParser({
-            hasAttributes: true
-          }).parseFromString(str);
-          for (const {
-            xfa
-          } of newRefs) {
-            if (!xfa) {
-              continue;
-            }
-            const {
-              path,
-              value
-            } = xfa;
-            if (!path) {
-              continue;
-            }
-            const nodePath = (0, _core_utils.parseXFAPath)(path);
-            let node = xml.documentElement.searchNode(nodePath, 0);
-            if (!node && nodePath.length > 1) {
-              node = xml.documentElement.searchNode([nodePath.at(-1)], 0);
-            }
-            if (node) {
-              if (Array.isArray(value)) {
-                node.childNodes = value.map(val => new _xml_parser.SimpleDOMNode("value", val));
-              } else {
-                node.childNodes = [new _xml_parser.SimpleDOMNode("#text", value)];
-              }
-            } else {
-              (0, _util.warn)(`Node not found for path: ${path}`);
-            }
-          }
-          const buffer = [];
-          xml.documentElement.dump(buffer);
-          return buffer.join("");
-        }
-        async function updateAcroform({
-          xref,
-          acroForm,
-          acroFormRef,
-          hasXfa,
-          hasXfaDatasetsEntry,
-          xfaDatasetsRef,
-          needAppearances,
-          newRefs
-        }) {
-          if (hasXfa && !hasXfaDatasetsEntry && !xfaDatasetsRef) {
-            (0, _util.warn)("XFA - Cannot save it");
-          }
-          if (!needAppearances && (!hasXfa || !xfaDatasetsRef)) {
-            return;
-          }
-          const dict = new _primitives.Dict(xref);
-          for (const key of acroForm.getKeys()) {
-            dict.set(key, acroForm.getRaw(key));
-          }
-          if (hasXfa && !hasXfaDatasetsEntry) {
-            const newXfa = acroForm.get("XFA").slice();
-            newXfa.splice(2, 0, "datasets");
-            newXfa.splice(3, 0, xfaDatasetsRef);
-            dict.set("XFA", newXfa);
-          }
-          if (needAppearances) {
-            dict.set("NeedAppearances", true);
-          }
-          const encrypt = xref.encrypt;
-          let transform = null;
-          if (encrypt) {
-            transform = encrypt.createCipherTransform(acroFormRef.num, acroFormRef.gen);
-          }
-          const buffer = [];
-          await writeObject(acroFormRef, dict, buffer, transform);
-          newRefs.push({
-            ref: acroFormRef,
-            data: buffer.join("")
-          });
-        }
-        function updateXFA({
-          xfaData,
-          xfaDatasetsRef,
-          newRefs,
-          xref
-        }) {
-          if (xfaData === null) {
-            const datasets = xref.fetchIfRef(xfaDatasetsRef);
-            xfaData = writeXFADataForAcroform(datasets.getString(), newRefs);
-          }
-          const encrypt = xref.encrypt;
-          if (encrypt) {
-            const transform = encrypt.createCipherTransform(xfaDatasetsRef.num, xfaDatasetsRef.gen);
-            xfaData = transform.encryptString(xfaData);
-          }
-          const data = `${xfaDatasetsRef.num} ${xfaDatasetsRef.gen} obj\n` + `<< /Type /EmbeddedFile /Length ${xfaData.length}>>\nstream\n` + xfaData + "\nendstream\nendobj\n";
-          newRefs.push({
-            ref: xfaDatasetsRef,
-            data
-          });
-        }
-        async function incrementalUpdate({
-          originalData,
-          xrefInfo,
-          newRefs,
-          xref = null,
-          hasXfa = false,
-          xfaDatasetsRef = null,
-          hasXfaDatasetsEntry = false,
-          needAppearances,
-          acroFormRef = null,
-          acroForm = null,
-          xfaData = null
-        }) {
-          await updateAcroform({
-            xref,
-            acroForm,
-            acroFormRef,
-            hasXfa,
-            hasXfaDatasetsEntry,
-            xfaDatasetsRef,
-            needAppearances,
-            newRefs
-          });
-          if (hasXfa) {
-            updateXFA({
-              xfaData,
-              xfaDatasetsRef,
-              newRefs,
-              xref
-            });
-          }
-          const newXref = new _primitives.Dict(null);
-          const refForXrefTable = xrefInfo.newRef;
-          let buffer, baseOffset;
-          const lastByte = originalData.at(-1);
-          if (lastByte === 0x0a || lastByte === 0x0d) {
-            buffer = [];
-            baseOffset = originalData.length;
-          } else {
-            buffer = ["\n"];
-            baseOffset = originalData.length + 1;
-          }
-          newXref.set("Size", refForXrefTable.num + 1);
-          newXref.set("Prev", xrefInfo.startXRef);
-          newXref.set("Type", _primitives.Name.get("XRef"));
-          if (xrefInfo.rootRef !== null) {
-            newXref.set("Root", xrefInfo.rootRef);
-          }
-          if (xrefInfo.infoRef !== null) {
-            newXref.set("Info", xrefInfo.infoRef);
-          }
-          if (xrefInfo.encryptRef !== null) {
-            newXref.set("Encrypt", xrefInfo.encryptRef);
-          }
-          newRefs.push({
-            ref: refForXrefTable,
-            data: ""
-          });
-          newRefs = newRefs.sort((a, b) => {
-            return a.ref.num - b.ref.num;
-          });
-          const xrefTableData = [[0, 1, 0xffff]];
-          const indexes = [0, 1];
-          let maxOffset = 0;
-          for (const {
-            ref,
-            data
-          } of newRefs) {
-            maxOffset = Math.max(maxOffset, baseOffset);
-            xrefTableData.push([1, baseOffset, Math.min(ref.gen, 0xffff)]);
-            baseOffset += data.length;
-            indexes.push(ref.num, 1);
-            buffer.push(data);
-          }
-          newXref.set("Index", indexes);
-          if (Array.isArray(xrefInfo.fileIds) && xrefInfo.fileIds.length > 0) {
-            const md5 = computeMD5(baseOffset, xrefInfo);
-            newXref.set("ID", [xrefInfo.fileIds[0], md5]);
-          }
-          const offsetSize = Math.ceil(Math.log2(maxOffset) / 8);
-          const sizes = [1, offsetSize, 2];
-          const structSize = sizes[0] + sizes[1] + sizes[2];
-          const tableLength = structSize * xrefTableData.length;
-          newXref.set("W", sizes);
-          newXref.set("Length", tableLength);
-          buffer.push(`${refForXrefTable.num} ${refForXrefTable.gen} obj\n`);
-          await writeDict(newXref, buffer, null);
-          buffer.push(" stream\n");
-          const bufferLen = buffer.reduce((a, str) => a + str.length, 0);
-          const footer = `\nendstream\nendobj\nstartxref\n${baseOffset}\n%%EOF\n`;
-          const array = new Uint8Array(originalData.length + bufferLen + tableLength + footer.length);
-          array.set(originalData);
-          let offset = originalData.length;
-          for (const str of buffer) {
-            writeString(str, offset, array);
-            offset += str.length;
-          }
-          for (const [type, objOffset, gen] of xrefTableData) {
-            offset = writeInt(type, sizes[0], offset, array);
-            offset = writeInt(objOffset, sizes[1], offset, array);
-            offset = writeInt(gen, sizes[2], offset, array);
-          }
-          writeString(footer, offset, array);
-          return array;
-        }
-
-        /***/
-}),
-/* 67 */
-/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
-
-
-
-        Object.defineProperty(exports, "__esModule", ({
-          value: true
-        }));
-        exports.XMLParserErrorCode = exports.XMLParserBase = exports.SimpleXMLParser = exports.SimpleDOMNode = void 0;
-        var _core_utils = __w_pdfjs_require__(3);
-        const XMLParserErrorCode = {
-          NoError: 0,
-          EndOfDocument: -1,
-          UnterminatedCdat: -2,
-          UnterminatedXmlDeclaration: -3,
-          UnterminatedDoctypeDeclaration: -4,
-          UnterminatedComment: -5,
-          MalformedElement: -6,
-          OutOfMemory: -7,
-          UnterminatedAttributeValue: -8,
-          UnterminatedElement: -9,
-          ElementNeverBegun: -10
-        };
-        exports.XMLParserErrorCode = XMLParserErrorCode;
-        function isWhitespace(s, index) {
-          const ch = s[index];
-          return ch === " " || ch === "\n" || ch === "\r" || ch === "\t";
-        }
-        function isWhitespaceString(s) {
-          for (let i = 0, ii = s.length; i < ii; i++) {
-            if (!isWhitespace(s, i)) {
-              return false;
-            }
-          }
-          return true;
-        }
-        class XMLParserBase {
-          _resolveEntities(s) {
-            return s.replaceAll(/&([^;]+);/g, (all, entity) => {
-              if (entity.substring(0, 2) === "#x") {
-                return String.fromCodePoint(parseInt(entity.substring(2), 16));
-              } else if (entity.substring(0, 1) === "#") {
-                return String.fromCodePoint(parseInt(entity.substring(1), 10));
-              }
-              switch (entity) {
-                case "lt":
-                  return "<";
-                case "gt":
-                  return ">";
-                case "amp":
-                  return "&";
-                case "quot":
-                  return '"';
-                case "apos":
-                  return "'";
-              }
-              return this.onResolveEntity(entity);
-            });
-          }
-          _parseContent(s, start) {
-            const attributes = [];
-            let pos = start;
-            function skipWs() {
-              while (pos < s.length && isWhitespace(s, pos)) {
-                ++pos;
-              }
-            }
-            while (pos < s.length && !isWhitespace(s, pos) && s[pos] !== ">" && s[pos] !== "/") {
-              ++pos;
-            }
-            const name = s.substring(start, pos);
-            skipWs();
-            while (pos < s.length && s[pos] !== ">" && s[pos] !== "/" && s[pos] !== "?") {
-              skipWs();
-              let attrName = "",
-                attrValue = "";
-              while (pos < s.length && !isWhitespace(s, pos) && s[pos] !== "=") {
-                attrName += s[pos];
-                ++pos;
-              }
-              skipWs();
-              if (s[pos] !== "=") {
-                return null;
-              }
-              ++pos;
-              skipWs();
-              const attrEndChar = s[pos];
-              if (attrEndChar !== '"' && attrEndChar !== "'") {
-                return null;
-              }
-              const attrEndIndex = s.indexOf(attrEndChar, ++pos);
-              if (attrEndIndex < 0) {
-                return null;
-              }
-              attrValue = s.substring(pos, attrEndIndex);
-              attributes.push({
-                name: attrName,
-                value: this._resolveEntities(attrValue)
-              });
-              pos = attrEndIndex + 1;
-              skipWs();
-            }
-            return {
-              name,
-              attributes,
-              parsed: pos - start
-            };
-          }
-          _parseProcessingInstruction(s, start) {
-            let pos = start;
-            function skipWs() {
-              while (pos < s.length && isWhitespace(s, pos)) {
-                ++pos;
-              }
-            }
-            while (pos < s.length && !isWhitespace(s, pos) && s[pos] !== ">" && s[pos] !== "?" && s[pos] !== "/") {
-              ++pos;
-            }
-            const name = s.substring(start, pos);
-            skipWs();
-            const attrStart = pos;
-            while (pos < s.length && (s[pos] !== "?" || s[pos + 1] !== ">")) {
-              ++pos;
-            }
-            const value = s.substring(attrStart, pos);
-            return {
-              name,
-              value,
-              parsed: pos - start
-            };
-          }
-          parseXml(s) {
-            let i = 0;
-            while (i < s.length) {
-              const ch = s[i];
-              let j = i;
-              if (ch === "<") {
-                ++j;
-                const ch2 = s[j];
-                let q;
-                switch (ch2) {
-                  case "/":
-                    ++j;
-                    q = s.indexOf(">", j);
-                    if (q < 0) {
-                      this.onError(XMLParserErrorCode.UnterminatedElement);
-                      return;
-                    }
-                    this.onEndElement(s.substring(j, q));
-                    j = q + 1;
-                    break;
-                  case "?":
-                    ++j;
-                    const pi = this._parseProcessingInstruction(s, j);
-                    if (s.substring(j + pi.parsed, j + pi.parsed + 2) !== "?>") {
-                      this.onError(XMLParserErrorCode.UnterminatedXmlDeclaration);
-                      return;
-                    }
-                    this.onPi(pi.name, pi.value);
-                    j += pi.parsed + 2;
-                    break;
-                  case "!":
-                    if (s.substring(j + 1, j + 3) === "--") {
-                      q = s.indexOf("-->", j + 3);
-                      if (q < 0) {
-                        this.onError(XMLParserErrorCode.UnterminatedComment);
-                        return;
-                      }
-                      this.onComment(s.substring(j + 3, q));
-                      j = q + 3;
-                    } else if (s.substring(j + 1, j + 8) === "[CDATA[") {
-                      q = s.indexOf("]]>", j + 8);
-                      if (q < 0) {
-                        this.onError(XMLParserErrorCode.UnterminatedCdat);
-                        return;
-                      }
-                      this.onCdata(s.substring(j + 8, q));
-                      j = q + 3;
-                    } else if (s.substring(j + 1, j + 8) === "DOCTYPE") {
-                      const q2 = s.indexOf("[", j + 8);
-                      let complexDoctype = false;
-                      q = s.indexOf(">", j + 8);
-                      if (q < 0) {
-                        this.onError(XMLParserErrorCode.UnterminatedDoctypeDeclaration);
-                        return;
-                      }
-                      if (q2 > 0 && q > q2) {
-                        q = s.indexOf("]>", j + 8);
-                        if (q < 0) {
-                          this.onError(XMLParserErrorCode.UnterminatedDoctypeDeclaration);
-                          return;
-                        }
-                        complexDoctype = true;
-                      }
-                      const doctypeContent = s.substring(j + 8, q + (complexDoctype ? 1 : 0));
-                      this.onDoctype(doctypeContent);
-                      j = q + (complexDoctype ? 2 : 1);
-                    } else {
-                      this.onError(XMLParserErrorCode.MalformedElement);
-                      return;
-                    }
-                    break;
-                  default:
-                    const content = this._parseContent(s, j);
-                    if (content === null) {
-                      this.onError(XMLParserErrorCode.MalformedElement);
-                      return;
-                    }
-                    let isClosed = false;
-                    if (s.substring(j + content.parsed, j + content.parsed + 2) === "/>") {
-                      isClosed = true;
-                    } else if (s.substring(j + content.parsed, j + content.parsed + 1) !== ">") {
-                      this.onError(XMLParserErrorCode.UnterminatedElement);
-                      return;
-                    }
-                    this.onBeginElement(content.name, content.attributes, isClosed);
-                    j += content.parsed + (isClosed ? 2 : 1);
-                    break;
-                }
-              } else {
-                while (j < s.length && s[j] !== "<") {
-                  j++;
-                }
-                const text = s.substring(i, j);
-                this.onText(this._resolveEntities(text));
-              }
-              i = j;
-            }
-          }
-          onResolveEntity(name) {
-            return `&${name};`;
-          }
-          onPi(name, value) { }
-          onComment(text) { }
-          onCdata(text) { }
-          onDoctype(doctypeContent) { }
-          onText(text) { }
-          onBeginElement(name, attributes, isEmpty) { }
-          onEndElement(name) { }
-          onError(code) { }
-        }
-        exports.XMLParserBase = XMLParserBase;
-        class SimpleDOMNode {
-          constructor(nodeName, nodeValue) {
-            this.nodeName = nodeName;
-            this.nodeValue = nodeValue;
-            Object.defineProperty(this, "parentNode", {
-              value: null,
-              writable: true
-            });
-          }
-          get firstChild() {
-            return this.childNodes?.[0];
-          }
-          get nextSibling() {
-            const childNodes = this.parentNode.childNodes;
-            if (!childNodes) {
-              return undefined;
-            }
-            const index = childNodes.indexOf(this);
-            if (index === -1) {
-              return undefined;
-            }
-            return childNodes[index + 1];
-          }
-          get textContent() {
-            if (!this.childNodes) {
-              return this.nodeValue || "";
-            }
-            return this.childNodes.map(function (child) {
-              return child.textContent;
-            }).join("");
-          }
-          get children() {
-            return this.childNodes || [];
-          }
-          hasChildNodes() {
-            return this.childNodes?.length > 0;
-          }
-          searchNode(paths, pos) {
-            if (pos >= paths.length) {
-              return this;
-            }
-            const component = paths[pos];
-            const stack = [];
-            let node = this;
-            while (true) {
-              if (component.name === node.nodeName) {
-                if (component.pos === 0) {
-                  const res = node.searchNode(paths, pos + 1);
-                  if (res !== null) {
-                    return res;
-                  }
-                } else if (stack.length === 0) {
-                  return null;
-                } else {
-                  const [parent] = stack.pop();
-                  let siblingPos = 0;
-                  for (const child of parent.childNodes) {
-                    if (component.name === child.nodeName) {
-                      if (siblingPos === component.pos) {
-                        return child.searchNode(paths, pos + 1);
-                      }
-                      siblingPos++;
-                    }
-                  }
-                  return node.searchNode(paths, pos + 1);
-                }
-              }
-              if (node.childNodes?.length > 0) {
-                stack.push([node, 0]);
-                node = node.childNodes[0];
-              } else if (stack.length === 0) {
-                return null;
-              } else {
-                while (stack.length !== 0) {
-                  const [parent, currentPos] = stack.pop();
-                  const newPos = currentPos + 1;
-                  if (newPos < parent.childNodes.length) {
-                    stack.push([parent, newPos]);
-                    node = parent.childNodes[newPos];
-                    break;
-                  }
-                }
-                if (stack.length === 0) {
-                  return null;
-                }
-              }
-            }
-          }
-          dump(buffer) {
-            if (this.nodeName === "#text") {
-              buffer.push((0, _core_utils.encodeToXmlString)(this.nodeValue));
-              return;
-            }
-            buffer.push(`<${this.nodeName}`);
-            if (this.attributes) {
-              for (const attribute of this.attributes) {
-                buffer.push(` ${attribute.name}="${(0, _core_utils.encodeToXmlString)(attribute.value)}"`);
-              }
-            }
-            if (this.hasChildNodes()) {
-              buffer.push(">");
-              for (const child of this.childNodes) {
-                child.dump(buffer);
-              }
-              buffer.push(`</${this.nodeName}>`);
-            } else if (this.nodeValue) {
-              buffer.push(`>${(0, _core_utils.encodeToXmlString)(this.nodeValue)}</${this.nodeName}>`);
-            } else {
-              buffer.push("/>");
-            }
-          }
-        }
-        exports.SimpleDOMNode = SimpleDOMNode;
-        class SimpleXMLParser extends XMLParserBase {
-          constructor({
-            hasAttributes = false,
-            lowerCaseName = false
-          }) {
-            super();
-            this._currentFragment = null;
-            this._stack = null;
-            this._errorCode = XMLParserErrorCode.NoError;
-            this._hasAttributes = hasAttributes;
-            this._lowerCaseName = lowerCaseName;
-          }
-          parseFromString(data) {
-            this._currentFragment = [];
-            this._stack = [];
-            this._errorCode = XMLParserErrorCode.NoError;
-            this.parseXml(data);
-            if (this._errorCode !== XMLParserErrorCode.NoError) {
-              return undefined;
-            }
-            const [documentElement] = this._currentFragment;
-            if (!documentElement) {
-              return undefined;
-            }
-            return {
-              documentElement
-            };
-          }
-          onText(text) {
-            if (isWhitespaceString(text)) {
-              return;
-            }
-            const node = new SimpleDOMNode("#text", text);
-            this._currentFragment.push(node);
-          }
-          onCdata(text) {
-            const node = new SimpleDOMNode("#text", text);
-            this._currentFragment.push(node);
-          }
-          onBeginElement(name, attributes, isEmpty) {
-            if (this._lowerCaseName) {
-              name = name.toLowerCase();
-            }
-            const node = new SimpleDOMNode(name);
-            node.childNodes = [];
-            if (this._hasAttributes) {
-              node.attributes = attributes;
-            }
-            this._currentFragment.push(node);
-            if (isEmpty) {
-              return;
-            }
-            this._stack.push(this._currentFragment);
-            this._currentFragment = node.childNodes;
-          }
-          onEndElement(name) {
-            this._currentFragment = this._stack.pop() || [];
-            const lastElement = this._currentFragment.at(-1);
-            if (!lastElement) {
-              return null;
-            }
-            for (const childNode of lastElement.childNodes) {
-              childNode.parentNode = lastElement;
-            }
-            return lastElement;
-          }
-          onError(code) {
-            this._errorCode = code;
-          }
-        }
-        exports.SimpleXMLParser = SimpleXMLParser;
-
-        /***/
-}),
-/* 68 */
-/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
-
-
-
-        Object.defineProperty(exports, "__esModule", ({
-          value: true
-        }));
-        exports.calculateSHA256 = exports.calculateMD5 = exports.PDF20 = exports.PDF17 = exports.CipherTransformFactory = exports.ARCFourCipher = exports.AES256Cipher = exports.AES128Cipher = void 0;
-        exports.calculateSHA384 = calculateSHA384;
-        exports.calculateSHA512 = void 0;
-        var _util = __w_pdfjs_require__(2);
-        var _primitives = __w_pdfjs_require__(4);
-        var _decrypt_stream = __w_pdfjs_require__(69);
-        class ARCFourCipher {
-          constructor(key) {
-            this.a = 0;
-            this.b = 0;
-            const s = new Uint8Array(256);
-            const keyLength = key.length;
-            for (let i = 0; i < 256; ++i) {
-              s[i] = i;
-            }
-            for (let i = 0, j = 0; i < 256; ++i) {
-              const tmp = s[i];
-              j = j + tmp + key[i % keyLength] & 0xff;
-              s[i] = s[j];
-              s[j] = tmp;
-            }
-            this.s = s;
-          }
-          encryptBlock(data) {
-            let a = this.a,
-              b = this.b;
-            const s = this.s;
-            const n = data.length;
-            const output = new Uint8Array(n);
-            for (let i = 0; i < n; ++i) {
-              a = a + 1 & 0xff;
-              const tmp = s[a];
-              b = b + tmp & 0xff;
-              const tmp2 = s[b];
-              s[a] = tmp2;
-              s[b] = tmp;
-              output[i] = data[i] ^ s[tmp + tmp2 & 0xff];
-            }
-            this.a = a;
-            this.b = b;
-            return output;
-          }
-          decryptBlock(data) {
-            return this.encryptBlock(data);
-          }
-          encrypt(data) {
-            return this.encryptBlock(data);
-          }
-        }
-        exports.ARCFourCipher = ARCFourCipher;
-        const calculateMD5 = function calculateMD5Closure() {
-          const r = new Uint8Array([7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21]);
-          const k = new Int32Array([-680876936, -389564586, 606105819, -1044525330, -176418897, 1200080426, -1473231341, -45705983, 1770035416, -1958414417, -42063, -1990404162, 1804603682, -40341101, -1502002290, 1236535329, -165796510, -1069501632, 643717713, -373897302, -701558691, 38016083, -660478335, -405537848, 568446438, -1019803690, -187363961, 1163531501, -1444681467, -51403784, 1735328473, -1926607734, -378558, -2022574463, 1839030562, -35309556, -1530992060, 1272893353, -155497632, -1094730640, 681279174, -358537222, -722521979, 76029189, -640364487, -421815835, 530742520, -995338651, -198630844, 1126891415, -1416354905, -57434055, 1700485571, -1894986606, -1051523, -2054922799, 1873313359, -30611744, -1560198380, 1309151649, -145523070, -1120210379, 718787259, -343485551]);
-          function hash(data, offset, length) {
-            let h0 = 1732584193,
-              h1 = -271733879,
-              h2 = -1732584194,
-              h3 = 271733878;
-            const paddedLength = length + 72 & ~63;
-            const padded = new Uint8Array(paddedLength);
-            let i, j;
-            for (i = 0; i < length; ++i) {
-              padded[i] = data[offset++];
-            }
-            padded[i++] = 0x80;
-            const n = paddedLength - 8;
-            while (i < n) {
-              padded[i++] = 0;
-            }
-            padded[i++] = length << 3 & 0xff;
-            padded[i++] = length >> 5 & 0xff;
-            padded[i++] = length >> 13 & 0xff;
-            padded[i++] = length >> 21 & 0xff;
-            padded[i++] = length >>> 29 & 0xff;
-            padded[i++] = 0;
-            padded[i++] = 0;
-            padded[i++] = 0;
-            const w = new Int32Array(16);
-            for (i = 0; i < paddedLength;) {
-              for (j = 0; j < 16; ++j, i += 4) {
-                w[j] = padded[i] | padded[i + 1] << 8 | padded[i + 2] << 16 | padded[i + 3] << 24;
-              }
-              let a = h0,
-                b = h1,
-                c = h2,
-                d = h3,
-                f,
-                g;
-              for (j = 0; j < 64; ++j) {
-                if (j < 16) {
-                  f = b & c | ~b & d;
-                  g = j;
-                } else if (j < 32) {
-                  f = d & b | ~d & c;
-                  g = 5 * j + 1 & 15;
-                } else if (j < 48) {
-                  f = b ^ c ^ d;
-                  g = 3 * j + 5 & 15;
-                } else {
-                  f = c ^ (b | ~d);
-                  g = 7 * j & 15;
-                }
-                const tmp = d,
-                  rotateArg = a + f + k[j] + w[g] | 0,
-                  rotate = r[j];
-                d = c;
-                c = b;
-                b = b + (rotateArg << rotate | rotateArg >>> 32 - rotate) | 0;
-                a = tmp;
-              }
-              h0 = h0 + a | 0;
-              h1 = h1 + b | 0;
-              h2 = h2 + c | 0;
-              h3 = h3 + d | 0;
-            }
-            return new Uint8Array([h0 & 0xFF, h0 >> 8 & 0xFF, h0 >> 16 & 0xFF, h0 >>> 24 & 0xFF, h1 & 0xFF, h1 >> 8 & 0xFF, h1 >> 16 & 0xFF, h1 >>> 24 & 0xFF, h2 & 0xFF, h2 >> 8 & 0xFF, h2 >> 16 & 0xFF, h2 >>> 24 & 0xFF, h3 & 0xFF, h3 >> 8 & 0xFF, h3 >> 16 & 0xFF, h3 >>> 24 & 0xFF]);
-          }
-          return hash;
-        }();
-        exports.calculateMD5 = calculateMD5;
-        class Word64 {
-          constructor(highInteger, lowInteger) {
-            this.high = highInteger | 0;
-            this.low = lowInteger | 0;
-          }
-          and(word) {
-            this.high &= word.high;
-            this.low &= word.low;
-          }
-          xor(word) {
-            this.high ^= word.high;
-            this.low ^= word.low;
-          }
-          or(word) {
-            this.high |= word.high;
-            this.low |= word.low;
-          }
-          shiftRight(places) {
-            if (places >= 32) {
-              this.low = this.high >>> places - 32 | 0;
-              this.high = 0;
-            } else {
-              this.low = this.low >>> places | this.high << 32 - places;
-              this.high = this.high >>> places | 0;
-            }
-          }
-          shiftLeft(places) {
-            if (places >= 32) {
-              this.high = this.low << places - 32;
-              this.low = 0;
-            } else {
-              this.high = this.high << places | this.low >>> 32 - places;
-              this.low <<= places;
-            }
-          }
-          rotateRight(places) {
-            let low, high;
-            if (places & 32) {
-              high = this.low;
-              low = this.high;
-            } else {
-              low = this.low;
-              high = this.high;
-            }
-            places &= 31;
-            this.low = low >>> places | high << 32 - places;
-            this.high = high >>> places | low << 32 - places;
-          }
-          not() {
-            this.high = ~this.high;
-            this.low = ~this.low;
-          }
-          add(word) {
-            const lowAdd = (this.low >>> 0) + (word.low >>> 0);
-            let highAdd = (this.high >>> 0) + (word.high >>> 0);
-            if (lowAdd > 0xffffffff) {
-              highAdd += 1;
-            }
-            this.low = lowAdd | 0;
-            this.high = highAdd | 0;
-          }
-          copyTo(bytes, offset) {
-            bytes[offset] = this.high >>> 24 & 0xff;
-            bytes[offset + 1] = this.high >> 16 & 0xff;
-            bytes[offset + 2] = this.high >> 8 & 0xff;
-            bytes[offset + 3] = this.high & 0xff;
-            bytes[offset + 4] = this.low >>> 24 & 0xff;
-            bytes[offset + 5] = this.low >> 16 & 0xff;
-            bytes[offset + 6] = this.low >> 8 & 0xff;
-            bytes[offset + 7] = this.low & 0xff;
-          }
-          assign(word) {
-            this.high = word.high;
-            this.low = word.low;
-          }
-        }
-        const calculateSHA256 = function calculateSHA256Closure() {
-          function rotr(x, n) {
-            return x >>> n | x << 32 - n;
-          }
-          function ch(x, y, z) {
-            return x & y ^ ~x & z;
-          }
-          function maj(x, y, z) {
-            return x & y ^ x & z ^ y & z;
-          }
-          function sigma(x) {
-            return rotr(x, 2) ^ rotr(x, 13) ^ rotr(x, 22);
-          }
-          function sigmaPrime(x) {
-            return rotr(x, 6) ^ rotr(x, 11) ^ rotr(x, 25);
-          }
-          function littleSigma(x) {
-            return rotr(x, 7) ^ rotr(x, 18) ^ x >>> 3;
-          }
-          function littleSigmaPrime(x) {
-            return rotr(x, 17) ^ rotr(x, 19) ^ x >>> 10;
-          }
-          const k = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2];
-          function hash(data, offset, length) {
-            let h0 = 0x6a09e667,
-              h1 = 0xbb67ae85,
-              h2 = 0x3c6ef372,
-              h3 = 0xa54ff53a,
-              h4 = 0x510e527f,
-              h5 = 0x9b05688c,
-              h6 = 0x1f83d9ab,
-              h7 = 0x5be0cd19;
-            const paddedLength = Math.ceil((length + 9) / 64) * 64;
-            const padded = new Uint8Array(paddedLength);
-            let i, j;
-            for (i = 0; i < length; ++i) {
-              padded[i] = data[offset++];
-            }
-            padded[i++] = 0x80;
-            const n = paddedLength - 8;
-            while (i < n) {
-              padded[i++] = 0;
-            }
-            padded[i++] = 0;
-            padded[i++] = 0;
-            padded[i++] = 0;
-            padded[i++] = length >>> 29 & 0xff;
-            padded[i++] = length >> 21 & 0xff;
-            padded[i++] = length >> 13 & 0xff;
-            padded[i++] = length >> 5 & 0xff;
-            padded[i++] = length << 3 & 0xff;
-            const w = new Uint32Array(64);
-            for (i = 0; i < paddedLength;) {
-              for (j = 0; j < 16; ++j) {
-                w[j] = padded[i] << 24 | padded[i + 1] << 16 | padded[i + 2] << 8 | padded[i + 3];
-                i += 4;
-              }
-              for (j = 16; j < 64; ++j) {
-                w[j] = littleSigmaPrime(w[j - 2]) + w[j - 7] + littleSigma(w[j - 15]) + w[j - 16] | 0;
-              }
-              let a = h0,
-                b = h1,
-                c = h2,
-                d = h3,
-                e = h4,
-                f = h5,
-                g = h6,
-                h = h7,
-                t1,
-                t2;
-              for (j = 0; j < 64; ++j) {
-                t1 = h + sigmaPrime(e) + ch(e, f, g) + k[j] + w[j];
-                t2 = sigma(a) + maj(a, b, c);
-                h = g;
-                g = f;
-                f = e;
-                e = d + t1 | 0;
-                d = c;
-                c = b;
-                b = a;
-                a = t1 + t2 | 0;
-              }
-              h0 = h0 + a | 0;
-              h1 = h1 + b | 0;
-              h2 = h2 + c | 0;
-              h3 = h3 + d | 0;
-              h4 = h4 + e | 0;
-              h5 = h5 + f | 0;
-              h6 = h6 + g | 0;
-              h7 = h7 + h | 0;
-            }
-            return new Uint8Array([h0 >> 24 & 0xFF, h0 >> 16 & 0xFF, h0 >> 8 & 0xFF, h0 & 0xFF, h1 >> 24 & 0xFF, h1 >> 16 & 0xFF, h1 >> 8 & 0xFF, h1 & 0xFF, h2 >> 24 & 0xFF, h2 >> 16 & 0xFF, h2 >> 8 & 0xFF, h2 & 0xFF, h3 >> 24 & 0xFF, h3 >> 16 & 0xFF, h3 >> 8 & 0xFF, h3 & 0xFF, h4 >> 24 & 0xFF, h4 >> 16 & 0xFF, h4 >> 8 & 0xFF, h4 & 0xFF, h5 >> 24 & 0xFF, h5 >> 16 & 0xFF, h5 >> 8 & 0xFF, h5 & 0xFF, h6 >> 24 & 0xFF, h6 >> 16 & 0xFF, h6 >> 8 & 0xFF, h6 & 0xFF, h7 >> 24 & 0xFF, h7 >> 16 & 0xFF, h7 >> 8 & 0xFF, h7 & 0xFF]);
-          }
-          return hash;
-        }();
-        exports.calculateSHA256 = calculateSHA256;
-        const calculateSHA512 = function calculateSHA512Closure() {
-          function ch(result, x, y, z, tmp) {
-            result.assign(x);
-            result.and(y);
-            tmp.assign(x);
-            tmp.not();
-            tmp.and(z);
-            result.xor(tmp);
-          }
-          function maj(result, x, y, z, tmp) {
-            result.assign(x);
-            result.and(y);
-            tmp.assign(x);
-            tmp.and(z);
-            result.xor(tmp);
-            tmp.assign(y);
-            tmp.and(z);
-            result.xor(tmp);
-          }
-          function sigma(result, x, tmp) {
-            result.assign(x);
-            result.rotateRight(28);
-            tmp.assign(x);
-            tmp.rotateRight(34);
-            result.xor(tmp);
-            tmp.assign(x);
-            tmp.rotateRight(39);
-            result.xor(tmp);
-          }
-          function sigmaPrime(result, x, tmp) {
-            result.assign(x);
-            result.rotateRight(14);
-            tmp.assign(x);
-            tmp.rotateRight(18);
-            result.xor(tmp);
-            tmp.assign(x);
-            tmp.rotateRight(41);
-            result.xor(tmp);
-          }
-          function littleSigma(result, x, tmp) {
-            result.assign(x);
-            result.rotateRight(1);
-            tmp.assign(x);
-            tmp.rotateRight(8);
-            result.xor(tmp);
-            tmp.assign(x);
-            tmp.shiftRight(7);
-            result.xor(tmp);
-          }
-          function littleSigmaPrime(result, x, tmp) {
-            result.assign(x);
-            result.rotateRight(19);
-            tmp.assign(x);
-            tmp.rotateRight(61);
-            result.xor(tmp);
-            tmp.assign(x);
-            tmp.shiftRight(6);
-            result.xor(tmp);
-          }
-          const k = [new Word64(0x428a2f98, 0xd728ae22), new Word64(0x71374491, 0x23ef65cd), new Word64(0xb5c0fbcf, 0xec4d3b2f), new Word64(0xe9b5dba5, 0x8189dbbc), new Word64(0x3956c25b, 0xf348b538), new Word64(0x59f111f1, 0xb605d019), new Word64(0x923f82a4, 0xaf194f9b), new Word64(0xab1c5ed5, 0xda6d8118), new Word64(0xd807aa98, 0xa3030242), new Word64(0x12835b01, 0x45706fbe), new Word64(0x243185be, 0x4ee4b28c), new Word64(0x550c7dc3, 0xd5ffb4e2), new Word64(0x72be5d74, 0xf27b896f), new Word64(0x80deb1fe, 0x3b1696b1), new Word64(0x9bdc06a7, 0x25c71235), new Word64(0xc19bf174, 0xcf692694), new Word64(0xe49b69c1, 0x9ef14ad2), new Word64(0xefbe4786, 0x384f25e3), new Word64(0x0fc19dc6, 0x8b8cd5b5), new Word64(0x240ca1cc, 0x77ac9c65), new Word64(0x2de92c6f, 0x592b0275), new Word64(0x4a7484aa, 0x6ea6e483), new Word64(0x5cb0a9dc, 0xbd41fbd4), new Word64(0x76f988da, 0x831153b5), new Word64(0x983e5152, 0xee66dfab), new Word64(0xa831c66d, 0x2db43210), new Word64(0xb00327c8, 0x98fb213f), new Word64(0xbf597fc7, 0xbeef0ee4), new Word64(0xc6e00bf3, 0x3da88fc2), new Word64(0xd5a79147, 0x930aa725), new Word64(0x06ca6351, 0xe003826f), new Word64(0x14292967, 0x0a0e6e70), new Word64(0x27b70a85, 0x46d22ffc), new Word64(0x2e1b2138, 0x5c26c926), new Word64(0x4d2c6dfc, 0x5ac42aed), new Word64(0x53380d13, 0x9d95b3df), new Word64(0x650a7354, 0x8baf63de), new Word64(0x766a0abb, 0x3c77b2a8), new Word64(0x81c2c92e, 0x47edaee6), new Word64(0x92722c85, 0x1482353b), new Word64(0xa2bfe8a1, 0x4cf10364), new Word64(0xa81a664b, 0xbc423001), new Word64(0xc24b8b70, 0xd0f89791), new Word64(0xc76c51a3, 0x0654be30), new Word64(0xd192e819, 0xd6ef5218), new Word64(0xd6990624, 0x5565a910), new Word64(0xf40e3585, 0x5771202a), new Word64(0x106aa070, 0x32bbd1b8), new Word64(0x19a4c116, 0xb8d2d0c8), new Word64(0x1e376c08, 0x5141ab53), new Word64(0x2748774c, 0xdf8eeb99), new Word64(0x34b0bcb5, 0xe19b48a8), new Word64(0x391c0cb3, 0xc5c95a63), new Word64(0x4ed8aa4a, 0xe3418acb), new Word64(0x5b9cca4f, 0x7763e373), new Word64(0x682e6ff3, 0xd6b2b8a3), new Word64(0x748f82ee, 0x5defb2fc), new Word64(0x78a5636f, 0x43172f60), new Word64(0x84c87814, 0xa1f0ab72), new Word64(0x8cc70208, 0x1a6439ec), new Word64(0x90befffa, 0x23631e28), new Word64(0xa4506ceb, 0xde82bde9), new Word64(0xbef9a3f7, 0xb2c67915), new Word64(0xc67178f2, 0xe372532b), new Word64(0xca273ece, 0xea26619c), new Word64(0xd186b8c7, 0x21c0c207), new Word64(0xeada7dd6, 0xcde0eb1e), new Word64(0xf57d4f7f, 0xee6ed178), new Word64(0x06f067aa, 0x72176fba), new Word64(0x0a637dc5, 0xa2c898a6), new Word64(0x113f9804, 0xbef90dae), new Word64(0x1b710b35, 0x131c471b), new Word64(0x28db77f5, 0x23047d84), new Word64(0x32caab7b, 0x40c72493), new Word64(0x3c9ebe0a, 0x15c9bebc), new Word64(0x431d67c4, 0x9c100d4c), new Word64(0x4cc5d4be, 0xcb3e42b6), new Word64(0x597f299c, 0xfc657e2a), new Word64(0x5fcb6fab, 0x3ad6faec), new Word64(0x6c44198c, 0x4a475817)];
-          function hash(data, offset, length, mode384 = false) {
-            let h0, h1, h2, h3, h4, h5, h6, h7;
-            if (!mode384) {
-              h0 = new Word64(0x6a09e667, 0xf3bcc908);
-              h1 = new Word64(0xbb67ae85, 0x84caa73b);
-              h2 = new Word64(0x3c6ef372, 0xfe94f82b);
-              h3 = new Word64(0xa54ff53a, 0x5f1d36f1);
-              h4 = new Word64(0x510e527f, 0xade682d1);
-              h5 = new Word64(0x9b05688c, 0x2b3e6c1f);
-              h6 = new Word64(0x1f83d9ab, 0xfb41bd6b);
-              h7 = new Word64(0x5be0cd19, 0x137e2179);
-            } else {
-              h0 = new Word64(0xcbbb9d5d, 0xc1059ed8);
-              h1 = new Word64(0x629a292a, 0x367cd507);
-              h2 = new Word64(0x9159015a, 0x3070dd17);
-              h3 = new Word64(0x152fecd8, 0xf70e5939);
-              h4 = new Word64(0x67332667, 0xffc00b31);
-              h5 = new Word64(0x8eb44a87, 0x68581511);
-              h6 = new Word64(0xdb0c2e0d, 0x64f98fa7);
-              h7 = new Word64(0x47b5481d, 0xbefa4fa4);
-            }
-            const paddedLength = Math.ceil((length + 17) / 128) * 128;
-            const padded = new Uint8Array(paddedLength);
-            let i, j;
-            for (i = 0; i < length; ++i) {
-              padded[i] = data[offset++];
-            }
-            padded[i++] = 0x80;
-            const n = paddedLength - 16;
-            while (i < n) {
-              padded[i++] = 0;
-            }
-            padded[i++] = 0;
-            padded[i++] = 0;
-            padded[i++] = 0;
-            padded[i++] = 0;
-            padded[i++] = 0;
-            padded[i++] = 0;
-            padded[i++] = 0;
-            padded[i++] = 0;
-            padded[i++] = 0;
-            padded[i++] = 0;
-            padded[i++] = 0;
-            padded[i++] = length >>> 29 & 0xff;
-            padded[i++] = length >> 21 & 0xff;
-            padded[i++] = length >> 13 & 0xff;
-            padded[i++] = length >> 5 & 0xff;
-            padded[i++] = length << 3 & 0xff;
-            const w = new Array(80);
-            for (i = 0; i < 80; i++) {
-              w[i] = new Word64(0, 0);
-            }
-            let a = new Word64(0, 0),
-              b = new Word64(0, 0),
-              c = new Word64(0, 0);
-            let d = new Word64(0, 0),
-              e = new Word64(0, 0),
-              f = new Word64(0, 0);
-            let g = new Word64(0, 0),
-              h = new Word64(0, 0);
-            const t1 = new Word64(0, 0),
-              t2 = new Word64(0, 0);
-            const tmp1 = new Word64(0, 0),
-              tmp2 = new Word64(0, 0);
-            let tmp3;
-            for (i = 0; i < paddedLength;) {
-              for (j = 0; j < 16; ++j) {
-                w[j].high = padded[i] << 24 | padded[i + 1] << 16 | padded[i + 2] << 8 | padded[i + 3];
-                w[j].low = padded[i + 4] << 24 | padded[i + 5] << 16 | padded[i + 6] << 8 | padded[i + 7];
-                i += 8;
-              }
-              for (j = 16; j < 80; ++j) {
-                tmp3 = w[j];
-                littleSigmaPrime(tmp3, w[j - 2], tmp2);
-                tmp3.add(w[j - 7]);
-                littleSigma(tmp1, w[j - 15], tmp2);
-                tmp3.add(tmp1);
-                tmp3.add(w[j - 16]);
-              }
-              a.assign(h0);
-              b.assign(h1);
-              c.assign(h2);
-              d.assign(h3);
-              e.assign(h4);
-              f.assign(h5);
-              g.assign(h6);
-              h.assign(h7);
-              for (j = 0; j < 80; ++j) {
-                t1.assign(h);
-                sigmaPrime(tmp1, e, tmp2);
-                t1.add(tmp1);
-                ch(tmp1, e, f, g, tmp2);
-                t1.add(tmp1);
-                t1.add(k[j]);
-                t1.add(w[j]);
-                sigma(t2, a, tmp2);
-                maj(tmp1, a, b, c, tmp2);
-                t2.add(tmp1);
-                tmp3 = h;
-                h = g;
-                g = f;
-                f = e;
-                d.add(t1);
-                e = d;
-                d = c;
-                c = b;
-                b = a;
-                tmp3.assign(t1);
-                tmp3.add(t2);
-                a = tmp3;
-              }
-              h0.add(a);
-              h1.add(b);
-              h2.add(c);
-              h3.add(d);
-              h4.add(e);
-              h5.add(f);
-              h6.add(g);
-              h7.add(h);
-            }
-            let result;
-            if (!mode384) {
-              result = new Uint8Array(64);
-              h0.copyTo(result, 0);
-              h1.copyTo(result, 8);
-              h2.copyTo(result, 16);
-              h3.copyTo(result, 24);
-              h4.copyTo(result, 32);
-              h5.copyTo(result, 40);
-              h6.copyTo(result, 48);
-              h7.copyTo(result, 56);
-            } else {
-              result = new Uint8Array(48);
-              h0.copyTo(result, 0);
-              h1.copyTo(result, 8);
-              h2.copyTo(result, 16);
-              h3.copyTo(result, 24);
-              h4.copyTo(result, 32);
-              h5.copyTo(result, 40);
-            }
-            return result;
-          }
-          return hash;
-        }();
-        exports.calculateSHA512 = calculateSHA512;
-        function calculateSHA384(data, offset, length) {
-          return calculateSHA512(data, offset, length, true);
-        }
-        class NullCipher {
-          decryptBlock(data) {
-            return data;
-          }
-          encrypt(data) {
-            return data;
-          }
-        }
-        class AESBaseCipher {
-          constructor() {
-            if (this.constructor === AESBaseCipher) {
-              (0, _util.unreachable)("Cannot initialize AESBaseCipher.");
-            }
-            this._s = new Uint8Array([0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76, 0xca, 0x82, 0xc9, 0x7d, 0xfa, 0x59, 0x47, 0xf0, 0xad, 0xd4, 0xa2, 0xaf, 0x9c, 0xa4, 0x72, 0xc0, 0xb7, 0xfd, 0x93, 0x26, 0x36, 0x3f, 0xf7, 0xcc, 0x34, 0xa5, 0xe5, 0xf1, 0x71, 0xd8, 0x31, 0x15, 0x04, 0xc7, 0x23, 0xc3, 0x18, 0x96, 0x05, 0x9a, 0x07, 0x12, 0x80, 0xe2, 0xeb, 0x27, 0xb2, 0x75, 0x09, 0x83, 0x2c, 0x1a, 0x1b, 0x6e, 0x5a, 0xa0, 0x52, 0x3b, 0xd6, 0xb3, 0x29, 0xe3, 0x2f, 0x84, 0x53, 0xd1, 0x00, 0xed, 0x20, 0xfc, 0xb1, 0x5b, 0x6a, 0xcb, 0xbe, 0x39, 0x4a, 0x4c, 0x58, 0xcf, 0xd0, 0xef, 0xaa, 0xfb, 0x43, 0x4d, 0x33, 0x85, 0x45, 0xf9, 0x02, 0x7f, 0x50, 0x3c, 0x9f, 0xa8, 0x51, 0xa3, 0x40, 0x8f, 0x92, 0x9d, 0x38, 0xf5, 0xbc, 0xb6, 0xda, 0x21, 0x10, 0xff, 0xf3, 0xd2, 0xcd, 0x0c, 0x13, 0xec, 0x5f, 0x97, 0x44, 0x17, 0xc4, 0xa7, 0x7e, 0x3d, 0x64, 0x5d, 0x19, 0x73, 0x60, 0x81, 0x4f, 0xdc, 0x22, 0x2a, 0x90, 0x88, 0x46, 0xee, 0xb8, 0x14, 0xde, 0x5e, 0x0b, 0xdb, 0xe0, 0x32, 0x3a, 0x0a, 0x49, 0x06, 0x24, 0x5c, 0xc2, 0xd3, 0xac, 0x62, 0x91, 0x95, 0xe4, 0x79, 0xe7, 0xc8, 0x37, 0x6d, 0x8d, 0xd5, 0x4e, 0xa9, 0x6c, 0x56, 0xf4, 0xea, 0x65, 0x7a, 0xae, 0x08, 0xba, 0x78, 0x25, 0x2e, 0x1c, 0xa6, 0xb4, 0xc6, 0xe8, 0xdd, 0x74, 0x1f, 0x4b, 0xbd, 0x8b, 0x8a, 0x70, 0x3e, 0xb5, 0x66, 0x48, 0x03, 0xf6, 0x0e, 0x61, 0x35, 0x57, 0xb9, 0x86, 0xc1, 0x1d, 0x9e, 0xe1, 0xf8, 0x98, 0x11, 0x69, 0xd9, 0x8e, 0x94, 0x9b, 0x1e, 0x87, 0xe9, 0xce, 0x55, 0x28, 0xdf, 0x8c, 0xa1, 0x89, 0x0d, 0xbf, 0xe6, 0x42, 0x68, 0x41, 0x99, 0x2d, 0x0f, 0xb0, 0x54, 0xbb, 0x16]);
-            this._inv_s = new Uint8Array([0x52, 0x09, 0x6a, 0xd5, 0x30, 0x36, 0xa5, 0x38, 0xbf, 0x40, 0xa3, 0x9e, 0x81, 0xf3, 0xd7, 0xfb, 0x7c, 0xe3, 0x39, 0x82, 0x9b, 0x2f, 0xff, 0x87, 0x34, 0x8e, 0x43, 0x44, 0xc4, 0xde, 0xe9, 0xcb, 0x54, 0x7b, 0x94, 0x32, 0xa6, 0xc2, 0x23, 0x3d, 0xee, 0x4c, 0x95, 0x0b, 0x42, 0xfa, 0xc3, 0x4e, 0x08, 0x2e, 0xa1, 0x66, 0x28, 0xd9, 0x24, 0xb2, 0x76, 0x5b, 0xa2, 0x49, 0x6d, 0x8b, 0xd1, 0x25, 0x72, 0xf8, 0xf6, 0x64, 0x86, 0x68, 0x98, 0x16, 0xd4, 0xa4, 0x5c, 0xcc, 0x5d, 0x65, 0xb6, 0x92, 0x6c, 0x70, 0x48, 0x50, 0xfd, 0xed, 0xb9, 0xda, 0x5e, 0x15, 0x46, 0x57, 0xa7, 0x8d, 0x9d, 0x84, 0x90, 0xd8, 0xab, 0x00, 0x8c, 0xbc, 0xd3, 0x0a, 0xf7, 0xe4, 0x58, 0x05, 0xb8, 0xb3, 0x45, 0x06, 0xd0, 0x2c, 0x1e, 0x8f, 0xca, 0x3f, 0x0f, 0x02, 0xc1, 0xaf, 0xbd, 0x03, 0x01, 0x13, 0x8a, 0x6b, 0x3a, 0x91, 0x11, 0x41, 0x4f, 0x67, 0xdc, 0xea, 0x97, 0xf2, 0xcf, 0xce, 0xf0, 0xb4, 0xe6, 0x73, 0x96, 0xac, 0x74, 0x22, 0xe7, 0xad, 0x35, 0x85, 0xe2, 0xf9, 0x37, 0xe8, 0x1c, 0x75, 0xdf, 0x6e, 0x47, 0xf1, 0x1a, 0x71, 0x1d, 0x29, 0xc5, 0x89, 0x6f, 0xb7, 0x62, 0x0e, 0xaa, 0x18, 0xbe, 0x1b, 0xfc, 0x56, 0x3e, 0x4b, 0xc6, 0xd2, 0x79, 0x20, 0x9a, 0xdb, 0xc0, 0xfe, 0x78, 0xcd, 0x5a, 0xf4, 0x1f, 0xdd, 0xa8, 0x33, 0x88, 0x07, 0xc7, 0x31, 0xb1, 0x12, 0x10, 0x59, 0x27, 0x80, 0xec, 0x5f, 0x60, 0x51, 0x7f, 0xa9, 0x19, 0xb5, 0x4a, 0x0d, 0x2d, 0xe5, 0x7a, 0x9f, 0x93, 0xc9, 0x9c, 0xef, 0xa0, 0xe0, 0x3b, 0x4d, 0xae, 0x2a, 0xf5, 0xb0, 0xc8, 0xeb, 0xbb, 0x3c, 0x83, 0x53, 0x99, 0x61, 0x17, 0x2b, 0x04, 0x7e, 0xba, 0x77, 0xd6, 0x26, 0xe1, 0x69, 0x14, 0x63, 0x55, 0x21, 0x0c, 0x7d]);
-            this._mix = new Uint32Array([0x00000000, 0x0e090d0b, 0x1c121a16, 0x121b171d, 0x3824342c, 0x362d3927, 0x24362e3a, 0x2a3f2331, 0x70486858, 0x7e416553, 0x6c5a724e, 0x62537f45, 0x486c5c74, 0x4665517f, 0x547e4662, 0x5a774b69, 0xe090d0b0, 0xee99ddbb, 0xfc82caa6, 0xf28bc7ad, 0xd8b4e49c, 0xd6bde997, 0xc4a6fe8a, 0xcaaff381, 0x90d8b8e8, 0x9ed1b5e3, 0x8ccaa2fe, 0x82c3aff5, 0xa8fc8cc4, 0xa6f581cf, 0xb4ee96d2, 0xbae79bd9, 0xdb3bbb7b, 0xd532b670, 0xc729a16d, 0xc920ac66, 0xe31f8f57, 0xed16825c, 0xff0d9541, 0xf104984a, 0xab73d323, 0xa57ade28, 0xb761c935, 0xb968c43e, 0x9357e70f, 0x9d5eea04, 0x8f45fd19, 0x814cf012, 0x3bab6bcb, 0x35a266c0, 0x27b971dd, 0x29b07cd6, 0x038f5fe7, 0x0d8652ec, 0x1f9d45f1, 0x119448fa, 0x4be30393, 0x45ea0e98, 0x57f11985, 0x59f8148e, 0x73c737bf, 0x7dce3ab4, 0x6fd52da9, 0x61dc20a2, 0xad766df6, 0xa37f60fd, 0xb16477e0, 0xbf6d7aeb, 0x955259da, 0x9b5b54d1, 0x894043cc, 0x87494ec7, 0xdd3e05ae, 0xd33708a5, 0xc12c1fb8, 0xcf2512b3, 0xe51a3182, 0xeb133c89, 0xf9082b94, 0xf701269f, 0x4de6bd46, 0x43efb04d, 0x51f4a750, 0x5ffdaa5b, 0x75c2896a, 0x7bcb8461, 0x69d0937c, 0x67d99e77, 0x3daed51e, 0x33a7d815, 0x21bccf08, 0x2fb5c203, 0x058ae132, 0x0b83ec39, 0x1998fb24, 0x1791f62f, 0x764dd68d, 0x7844db86, 0x6a5fcc9b, 0x6456c190, 0x4e69e2a1, 0x4060efaa, 0x527bf8b7, 0x5c72f5bc, 0x0605bed5, 0x080cb3de, 0x1a17a4c3, 0x141ea9c8, 0x3e218af9, 0x302887f2, 0x223390ef, 0x2c3a9de4, 0x96dd063d, 0x98d40b36, 0x8acf1c2b, 0x84c61120, 0xaef93211, 0xa0f03f1a, 0xb2eb2807, 0xbce2250c, 0xe6956e65, 0xe89c636e, 0xfa877473, 0xf48e7978, 0xdeb15a49, 0xd0b85742, 0xc2a3405f, 0xccaa4d54, 0x41ecdaf7, 0x4fe5d7fc, 0x5dfec0e1, 0x53f7cdea, 0x79c8eedb, 0x77c1e3d0, 0x65daf4cd, 0x6bd3f9c6, 0x31a4b2af, 0x3fadbfa4, 0x2db6a8b9, 0x23bfa5b2, 0x09808683, 0x07898b88, 0x15929c95, 0x1b9b919e, 0xa17c0a47, 0xaf75074c, 0xbd6e1051, 0xb3671d5a, 0x99583e6b, 0x97513360, 0x854a247d, 0x8b432976, 0xd134621f, 0xdf3d6f14, 0xcd267809, 0xc32f7502, 0xe9105633, 0xe7195b38, 0xf5024c25, 0xfb0b412e, 0x9ad7618c, 0x94de6c87, 0x86c57b9a, 0x88cc7691, 0xa2f355a0, 0xacfa58ab, 0xbee14fb6, 0xb0e842bd, 0xea9f09d4, 0xe49604df, 0xf68d13c2, 0xf8841ec9, 0xd2bb3df8, 0xdcb230f3, 0xcea927ee, 0xc0a02ae5, 0x7a47b13c, 0x744ebc37, 0x6655ab2a, 0x685ca621, 0x42638510, 0x4c6a881b, 0x5e719f06, 0x5078920d, 0x0a0fd964, 0x0406d46f, 0x161dc372, 0x1814ce79, 0x322bed48, 0x3c22e043, 0x2e39f75e, 0x2030fa55, 0xec9ab701, 0xe293ba0a, 0xf088ad17, 0xfe81a01c, 0xd4be832d, 0xdab78e26, 0xc8ac993b, 0xc6a59430, 0x9cd2df59, 0x92dbd252, 0x80c0c54f, 0x8ec9c844, 0xa4f6eb75, 0xaaffe67e, 0xb8e4f163, 0xb6edfc68, 0x0c0a67b1, 0x02036aba, 0x10187da7, 0x1e1170ac, 0x342e539d, 0x3a275e96, 0x283c498b, 0x26354480, 0x7c420fe9, 0x724b02e2, 0x605015ff, 0x6e5918f4, 0x44663bc5, 0x4a6f36ce, 0x587421d3, 0x567d2cd8, 0x37a10c7a, 0x39a80171, 0x2bb3166c, 0x25ba1b67, 0x0f853856, 0x018c355d, 0x13972240, 0x1d9e2f4b, 0x47e96422, 0x49e06929, 0x5bfb7e34, 0x55f2733f, 0x7fcd500e, 0x71c45d05, 0x63df4a18, 0x6dd64713, 0xd731dcca, 0xd938d1c1, 0xcb23c6dc, 0xc52acbd7, 0xef15e8e6, 0xe11ce5ed, 0xf307f2f0, 0xfd0efffb, 0xa779b492, 0xa970b999, 0xbb6bae84, 0xb562a38f, 0x9f5d80be, 0x91548db5, 0x834f9aa8, 0x8d4697a3]);
-            this._mixCol = new Uint8Array(256);
-            for (let i = 0; i < 256; i++) {
-              if (i < 128) {
-                this._mixCol[i] = i << 1;
-              } else {
-                this._mixCol[i] = i << 1 ^ 0x1b;
-              }
-            }
-            this.buffer = new Uint8Array(16);
-            this.bufferPosition = 0;
-          }
-          _expandKey(cipherKey) {
-            (0, _util.unreachable)("Cannot call `_expandKey` on the base class");
-          }
-          _decrypt(input, key) {
-            let t, u, v;
-            const state = new Uint8Array(16);
-            state.set(input);
-            for (let j = 0, k = this._keySize; j < 16; ++j, ++k) {
-              state[j] ^= key[k];
-            }
-            for (let i = this._cyclesOfRepetition - 1; i >= 1; --i) {
-              t = state[13];
-              state[13] = state[9];
-              state[9] = state[5];
-              state[5] = state[1];
-              state[1] = t;
-              t = state[14];
-              u = state[10];
-              state[14] = state[6];
-              state[10] = state[2];
-              state[6] = t;
-              state[2] = u;
-              t = state[15];
-              u = state[11];
-              v = state[7];
-              state[15] = state[3];
-              state[11] = t;
-              state[7] = u;
-              state[3] = v;
-              for (let j = 0; j < 16; ++j) {
-                state[j] = this._inv_s[state[j]];
-              }
-              for (let j = 0, k = i * 16; j < 16; ++j, ++k) {
-                state[j] ^= key[k];
-              }
-              for (let j = 0; j < 16; j += 4) {
-                const s0 = this._mix[state[j]];
-                const s1 = this._mix[state[j + 1]];
-                const s2 = this._mix[state[j + 2]];
-                const s3 = this._mix[state[j + 3]];
-                t = s0 ^ s1 >>> 8 ^ s1 << 24 ^ s2 >>> 16 ^ s2 << 16 ^ s3 >>> 24 ^ s3 << 8;
-                state[j] = t >>> 24 & 0xff;
-                state[j + 1] = t >> 16 & 0xff;
-                state[j + 2] = t >> 8 & 0xff;
-                state[j + 3] = t & 0xff;
-              }
-            }
-            t = state[13];
-            state[13] = state[9];
-            state[9] = state[5];
-            state[5] = state[1];
-            state[1] = t;
-            t = state[14];
-            u = state[10];
-            state[14] = state[6];
-            state[10] = state[2];
-            state[6] = t;
-            state[2] = u;
-            t = state[15];
-            u = state[11];
-            v = state[7];
-            state[15] = state[3];
-            state[11] = t;
-            state[7] = u;
-            state[3] = v;
-            for (let j = 0; j < 16; ++j) {
-              state[j] = this._inv_s[state[j]];
-              state[j] ^= key[j];
-            }
-            return state;
-          }
-          _encrypt(input, key) {
-            const s = this._s;
-            let t, u, v;
-            const state = new Uint8Array(16);
-            state.set(input);
-            for (let j = 0; j < 16; ++j) {
-              state[j] ^= key[j];
-            }
-            for (let i = 1; i < this._cyclesOfRepetition; i++) {
-              for (let j = 0; j < 16; ++j) {
-                state[j] = s[state[j]];
-              }
-              v = state[1];
-              state[1] = state[5];
-              state[5] = state[9];
-              state[9] = state[13];
-              state[13] = v;
-              v = state[2];
-              u = state[6];
-              state[2] = state[10];
-              state[6] = state[14];
-              state[10] = v;
-              state[14] = u;
-              v = state[3];
-              u = state[7];
-              t = state[11];
-              state[3] = state[15];
-              state[7] = v;
-              state[11] = u;
-              state[15] = t;
-              for (let j = 0; j < 16; j += 4) {
-                const s0 = state[j + 0];
-                const s1 = state[j + 1];
-                const s2 = state[j + 2];
-                const s3 = state[j + 3];
-                t = s0 ^ s1 ^ s2 ^ s3;
-                state[j + 0] ^= t ^ this._mixCol[s0 ^ s1];
-                state[j + 1] ^= t ^ this._mixCol[s1 ^ s2];
-                state[j + 2] ^= t ^ this._mixCol[s2 ^ s3];
-                state[j + 3] ^= t ^ this._mixCol[s3 ^ s0];
-              }
-              for (let j = 0, k = i * 16; j < 16; ++j, ++k) {
-                state[j] ^= key[k];
-              }
-            }
-            for (let j = 0; j < 16; ++j) {
-              state[j] = s[state[j]];
-            }
-            v = state[1];
-            state[1] = state[5];
-            state[5] = state[9];
-            state[9] = state[13];
-            state[13] = v;
-            v = state[2];
-            u = state[6];
-            state[2] = state[10];
-            state[6] = state[14];
-            state[10] = v;
-            state[14] = u;
-            v = state[3];
-            u = state[7];
-            t = state[11];
-            state[3] = state[15];
-            state[7] = v;
-            state[11] = u;
-            state[15] = t;
-            for (let j = 0, k = this._keySize; j < 16; ++j, ++k) {
-              state[j] ^= key[k];
-            }
-            return state;
-          }
-          _decryptBlock2(data, finalize) {
-            const sourceLength = data.length;
-            let buffer = this.buffer,
-              bufferLength = this.bufferPosition;
-            const result = [];
-            let iv = this.iv;
-            for (let i = 0; i < sourceLength; ++i) {
-              buffer[bufferLength] = data[i];
-              ++bufferLength;
-              if (bufferLength < 16) {
-                continue;
-              }
-              const plain = this._decrypt(buffer, this._key);
-              for (let j = 0; j < 16; ++j) {
-                plain[j] ^= iv[j];
-              }
-              iv = buffer;
-              result.push(plain);
-              buffer = new Uint8Array(16);
-              bufferLength = 0;
-            }
-            this.buffer = buffer;
-            this.bufferLength = bufferLength;
-            this.iv = iv;
-            if (result.length === 0) {
-              return new Uint8Array(0);
-            }
-            let outputLength = 16 * result.length;
-            if (finalize) {
-              const lastBlock = result.at(-1);
-              let psLen = lastBlock[15];
-              if (psLen <= 16) {
-                for (let i = 15, ii = 16 - psLen; i >= ii; --i) {
-                  if (lastBlock[i] !== psLen) {
-                    psLen = 0;
-                    break;
-                  }
-                }
-                outputLength -= psLen;
-                result[result.length - 1] = lastBlock.subarray(0, 16 - psLen);
-              }
-            }
-            const output = new Uint8Array(outputLength);
-            for (let i = 0, j = 0, ii = result.length; i < ii; ++i, j += 16) {
-              output.set(result[i], j);
-            }
-            return output;
-          }
-          decryptBlock(data, finalize, iv = null) {
-            const sourceLength = data.length;
-            const buffer = this.buffer;
-            let bufferLength = this.bufferPosition;
-            if (iv) {
-              this.iv = iv;
-            } else {
-              for (let i = 0; bufferLength < 16 && i < sourceLength; ++i, ++bufferLength) {
-                buffer[bufferLength] = data[i];
-              }
-              if (bufferLength < 16) {
-                this.bufferLength = bufferLength;
-                return new Uint8Array(0);
-              }
-              this.iv = buffer;
-              data = data.subarray(16);
-            }
-            this.buffer = new Uint8Array(16);
-            this.bufferLength = 0;
-            this.decryptBlock = this._decryptBlock2;
-            return this.decryptBlock(data, finalize);
-          }
-          encrypt(data, iv) {
-            const sourceLength = data.length;
-            let buffer = this.buffer,
-              bufferLength = this.bufferPosition;
-            const result = [];
-            if (!iv) {
-              iv = new Uint8Array(16);
-            }
-            for (let i = 0; i < sourceLength; ++i) {
-              buffer[bufferLength] = data[i];
-              ++bufferLength;
-              if (bufferLength < 16) {
-                continue;
-              }
-              for (let j = 0; j < 16; ++j) {
-                buffer[j] ^= iv[j];
-              }
-              const cipher = this._encrypt(buffer, this._key);
-              iv = cipher;
-              result.push(cipher);
-              buffer = new Uint8Array(16);
-              bufferLength = 0;
-            }
-            this.buffer = buffer;
-            this.bufferLength = bufferLength;
-            this.iv = iv;
-            if (result.length === 0) {
-              return new Uint8Array(0);
-            }
-            const outputLength = 16 * result.length;
-            const output = new Uint8Array(outputLength);
-            for (let i = 0, j = 0, ii = result.length; i < ii; ++i, j += 16) {
-              output.set(result[i], j);
-            }
-            return output;
-          }
-        }
-        class AES128Cipher extends AESBaseCipher {
-          constructor(key) {
-            super();
-            this._cyclesOfRepetition = 10;
-            this._keySize = 160;
-            this._rcon = new Uint8Array([0x8d, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36, 0x6c, 0xd8, 0xab, 0x4d, 0x9a, 0x2f, 0x5e, 0xbc, 0x63, 0xc6, 0x97, 0x35, 0x6a, 0xd4, 0xb3, 0x7d, 0xfa, 0xef, 0xc5, 0x91, 0x39, 0x72, 0xe4, 0xd3, 0xbd, 0x61, 0xc2, 0x9f, 0x25, 0x4a, 0x94, 0x33, 0x66, 0xcc, 0x83, 0x1d, 0x3a, 0x74, 0xe8, 0xcb, 0x8d, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36, 0x6c, 0xd8, 0xab, 0x4d, 0x9a, 0x2f, 0x5e, 0xbc, 0x63, 0xc6, 0x97, 0x35, 0x6a, 0xd4, 0xb3, 0x7d, 0xfa, 0xef, 0xc5, 0x91, 0x39, 0x72, 0xe4, 0xd3, 0xbd, 0x61, 0xc2, 0x9f, 0x25, 0x4a, 0x94, 0x33, 0x66, 0xcc, 0x83, 0x1d, 0x3a, 0x74, 0xe8, 0xcb, 0x8d, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36, 0x6c, 0xd8, 0xab, 0x4d, 0x9a, 0x2f, 0x5e, 0xbc, 0x63, 0xc6, 0x97, 0x35, 0x6a, 0xd4, 0xb3, 0x7d, 0xfa, 0xef, 0xc5, 0x91, 0x39, 0x72, 0xe4, 0xd3, 0xbd, 0x61, 0xc2, 0x9f, 0x25, 0x4a, 0x94, 0x33, 0x66, 0xcc, 0x83, 0x1d, 0x3a, 0x74, 0xe8, 0xcb, 0x8d, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36, 0x6c, 0xd8, 0xab, 0x4d, 0x9a, 0x2f, 0x5e, 0xbc, 0x63, 0xc6, 0x97, 0x35, 0x6a, 0xd4, 0xb3, 0x7d, 0xfa, 0xef, 0xc5, 0x91, 0x39, 0x72, 0xe4, 0xd3, 0xbd, 0x61, 0xc2, 0x9f, 0x25, 0x4a, 0x94, 0x33, 0x66, 0xcc, 0x83, 0x1d, 0x3a, 0x74, 0xe8, 0xcb, 0x8d, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36, 0x6c, 0xd8, 0xab, 0x4d, 0x9a, 0x2f, 0x5e, 0xbc, 0x63, 0xc6, 0x97, 0x35, 0x6a, 0xd4, 0xb3, 0x7d, 0xfa, 0xef, 0xc5, 0x91, 0x39, 0x72, 0xe4, 0xd3, 0xbd, 0x61, 0xc2, 0x9f, 0x25, 0x4a, 0x94, 0x33, 0x66, 0xcc, 0x83, 0x1d, 0x3a, 0x74, 0xe8, 0xcb, 0x8d]);
-            this._key = this._expandKey(key);
-          }
-          _expandKey(cipherKey) {
-            const b = 176;
-            const s = this._s;
-            const rcon = this._rcon;
-            const result = new Uint8Array(b);
-            result.set(cipherKey);
-            for (let j = 16, i = 1; j < b; ++i) {
-              let t1 = result[j - 3];
-              let t2 = result[j - 2];
-              let t3 = result[j - 1];
-              let t4 = result[j - 4];
-              t1 = s[t1];
-              t2 = s[t2];
-              t3 = s[t3];
-              t4 = s[t4];
-              t1 ^= rcon[i];
-              for (let n = 0; n < 4; ++n) {
-                result[j] = t1 ^= result[j - 16];
-                j++;
-                result[j] = t2 ^= result[j - 16];
-                j++;
-                result[j] = t3 ^= result[j - 16];
-                j++;
-                result[j] = t4 ^= result[j - 16];
-                j++;
-              }
-            }
-            return result;
-          }
-        }
-        exports.AES128Cipher = AES128Cipher;
-        class AES256Cipher extends AESBaseCipher {
-          constructor(key) {
-            super();
-            this._cyclesOfRepetition = 14;
-            this._keySize = 224;
-            this._key = this._expandKey(key);
-          }
-          _expandKey(cipherKey) {
-            const b = 240;
-            const s = this._s;
-            const result = new Uint8Array(b);
-            result.set(cipherKey);
-            let r = 1;
-            let t1, t2, t3, t4;
-            for (let j = 32, i = 1; j < b; ++i) {
-              if (j % 32 === 16) {
-                t1 = s[t1];
-                t2 = s[t2];
-                t3 = s[t3];
-                t4 = s[t4];
-              } else if (j % 32 === 0) {
-                t1 = result[j - 3];
-                t2 = result[j - 2];
-                t3 = result[j - 1];
-                t4 = result[j - 4];
-                t1 = s[t1];
-                t2 = s[t2];
-                t3 = s[t3];
-                t4 = s[t4];
-                t1 ^= r;
-                if ((r <<= 1) >= 256) {
-                  r = (r ^ 0x1b) & 0xff;
-                }
-              }
-              for (let n = 0; n < 4; ++n) {
-                result[j] = t1 ^= result[j - 32];
-                j++;
-                result[j] = t2 ^= result[j - 32];
-                j++;
-                result[j] = t3 ^= result[j - 32];
-                j++;
-                result[j] = t4 ^= result[j - 32];
-                j++;
-              }
-            }
-            return result;
-          }
-        }
-        exports.AES256Cipher = AES256Cipher;
-        class PDF17 {
-          checkOwnerPassword(password, ownerValidationSalt, userBytes, ownerPassword) {
-            const hashData = new Uint8Array(password.length + 56);
-            hashData.set(password, 0);
-            hashData.set(ownerValidationSalt, password.length);
-            hashData.set(userBytes, password.length + ownerValidationSalt.length);
-            const result = calculateSHA256(hashData, 0, hashData.length);
-            return (0, _util.isArrayEqual)(result, ownerPassword);
-          }
-          checkUserPassword(password, userValidationSalt, userPassword) {
-            const hashData = new Uint8Array(password.length + 8);
-            hashData.set(password, 0);
-            hashData.set(userValidationSalt, password.length);
-            const result = calculateSHA256(hashData, 0, hashData.length);
-            return (0, _util.isArrayEqual)(result, userPassword);
-          }
-          getOwnerKey(password, ownerKeySalt, userBytes, ownerEncryption) {
-            const hashData = new Uint8Array(password.length + 56);
-            hashData.set(password, 0);
-            hashData.set(ownerKeySalt, password.length);
-            hashData.set(userBytes, password.length + ownerKeySalt.length);
-            const key = calculateSHA256(hashData, 0, hashData.length);
-            const cipher = new AES256Cipher(key);
-            return cipher.decryptBlock(ownerEncryption, false, new Uint8Array(16));
-          }
-          getUserKey(password, userKeySalt, userEncryption) {
-            const hashData = new Uint8Array(password.length + 8);
-            hashData.set(password, 0);
-            hashData.set(userKeySalt, password.length);
-            const key = calculateSHA256(hashData, 0, hashData.length);
-            const cipher = new AES256Cipher(key);
-            return cipher.decryptBlock(userEncryption, false, new Uint8Array(16));
-          }
-        }
-        exports.PDF17 = PDF17;
-        class PDF20 {
-          _hash(password, input, userBytes) {
-            let k = calculateSHA256(input, 0, input.length).subarray(0, 32);
-            let e = [0];
-            let i = 0;
-            while (i < 64 || e.at(-1) > i - 32) {
-              const combinedLength = password.length + k.length + userBytes.length,
-                combinedArray = new Uint8Array(combinedLength);
-              let writeOffset = 0;
-              combinedArray.set(password, writeOffset);
-              writeOffset += password.length;
-              combinedArray.set(k, writeOffset);
-              writeOffset += k.length;
-              combinedArray.set(userBytes, writeOffset);
-              const k1 = new Uint8Array(combinedLength * 64);
-              for (let j = 0, pos = 0; j < 64; j++, pos += combinedLength) {
-                k1.set(combinedArray, pos);
-              }
-              const cipher = new AES128Cipher(k.subarray(0, 16));
-              e = cipher.encrypt(k1, k.subarray(16, 32));
-              const remainder = e.slice(0, 16).reduce((a, b) => a + b, 0) % 3;
-              if (remainder === 0) {
-                k = calculateSHA256(e, 0, e.length);
-              } else if (remainder === 1) {
-                k = calculateSHA384(e, 0, e.length);
-              } else if (remainder === 2) {
-                k = calculateSHA512(e, 0, e.length);
-              }
-              i++;
-            }
-            return k.subarray(0, 32);
-          }
-          checkOwnerPassword(password, ownerValidationSalt, userBytes, ownerPassword) {
-            const hashData = new Uint8Array(password.length + 56);
-            hashData.set(password, 0);
-            hashData.set(ownerValidationSalt, password.length);
-            hashData.set(userBytes, password.length + ownerValidationSalt.length);
-            const result = this._hash(password, hashData, userBytes);
-            return (0, _util.isArrayEqual)(result, ownerPassword);
-          }
-          checkUserPassword(password, userValidationSalt, userPassword) {
-            const hashData = new Uint8Array(password.length + 8);
-            hashData.set(password, 0);
-            hashData.set(userValidationSalt, password.length);
-            const result = this._hash(password, hashData, []);
-            return (0, _util.isArrayEqual)(result, userPassword);
-          }
-          getOwnerKey(password, ownerKeySalt, userBytes, ownerEncryption) {
-            const hashData = new Uint8Array(password.length + 56);
-            hashData.set(password, 0);
-            hashData.set(ownerKeySalt, password.length);
-            hashData.set(userBytes, password.length + ownerKeySalt.length);
-            const key = this._hash(password, hashData, userBytes);
-            const cipher = new AES256Cipher(key);
-            return cipher.decryptBlock(ownerEncryption, false, new Uint8Array(16));
-          }
-          getUserKey(password, userKeySalt, userEncryption) {
-            const hashData = new Uint8Array(password.length + 8);
-            hashData.set(password, 0);
-            hashData.set(userKeySalt, password.length);
-            const key = this._hash(password, hashData, []);
-            const cipher = new AES256Cipher(key);
-            return cipher.decryptBlock(userEncryption, false, new Uint8Array(16));
-          }
-        }
-        exports.PDF20 = PDF20;
-        class CipherTransform {
-          constructor(stringCipherConstructor, streamCipherConstructor) {
-            this.StringCipherConstructor = stringCipherConstructor;
-            this.StreamCipherConstructor = streamCipherConstructor;
-          }
-          createStream(stream, length) {
-            const cipher = new this.StreamCipherConstructor();
-            return new _decrypt_stream.DecryptStream(stream, length, function cipherTransformDecryptStream(data, finalize) {
-              return cipher.decryptBlock(data, finalize);
-            });
-          }
-          decryptString(s) {
-            const cipher = new this.StringCipherConstructor();
-            let data = (0, _util.stringToBytes)(s);
-            data = cipher.decryptBlock(data, true);
-            return (0, _util.bytesToString)(data);
-          }
-          encryptString(s) {
-            const cipher = new this.StringCipherConstructor();
-            if (cipher instanceof AESBaseCipher) {
-              const strLen = s.length;
-              const pad = 16 - strLen % 16;
-              s += String.fromCharCode(pad).repeat(pad);
-              const iv = new Uint8Array(16);
-              if (typeof crypto !== "undefined") {
-                crypto.getRandomValues(iv);
-              } else {
-                for (let i = 0; i < 16; i++) {
-                  iv[i] = Math.floor(256 * Math.random());
-                }
-              }
-              let data = (0, _util.stringToBytes)(s);
-              data = cipher.encrypt(data, iv);
-              const buf = new Uint8Array(16 + data.length);
-              buf.set(iv);
-              buf.set(data, 16);
-              return (0, _util.bytesToString)(buf);
-            }
-            let data = (0, _util.stringToBytes)(s);
-            data = cipher.encrypt(data);
-            return (0, _util.bytesToString)(data);
-          }
-        }
-        const CipherTransformFactory = function CipherTransformFactoryClosure() {
-          const defaultPasswordBytes = new Uint8Array([0x28, 0xbf, 0x4e, 0x5e, 0x4e, 0x75, 0x8a, 0x41, 0x64, 0x00, 0x4e, 0x56, 0xff, 0xfa, 0x01, 0x08, 0x2e, 0x2e, 0x00, 0xb6, 0xd0, 0x68, 0x3e, 0x80, 0x2f, 0x0c, 0xa9, 0xfe, 0x64, 0x53, 0x69, 0x7a]);
-          function createEncryptionKey20(revision, password, ownerPassword, ownerValidationSalt, ownerKeySalt, uBytes, userPassword, userValidationSalt, userKeySalt, ownerEncryption, userEncryption, perms) {
-            if (password) {
-              const passwordLength = Math.min(127, password.length);
-              password = password.subarray(0, passwordLength);
-            } else {
-              password = [];
-            }
-            let pdfAlgorithm;
-            if (revision === 6) {
-              pdfAlgorithm = new PDF20();
-            } else {
-              pdfAlgorithm = new PDF17();
-            }
-            if (pdfAlgorithm.checkUserPassword(password, userValidationSalt, userPassword)) {
-              return pdfAlgorithm.getUserKey(password, userKeySalt, userEncryption);
-            } else if (password.length && pdfAlgorithm.checkOwnerPassword(password, ownerValidationSalt, uBytes, ownerPassword)) {
-              return pdfAlgorithm.getOwnerKey(password, ownerKeySalt, uBytes, ownerEncryption);
-            }
-            return null;
-          }
-          function prepareKeyData(fileId, password, ownerPassword, userPassword, flags, revision, keyLength, encryptMetadata) {
-            const hashDataSize = 40 + ownerPassword.length + fileId.length;
-            const hashData = new Uint8Array(hashDataSize);
-            let i = 0,
-              j,
-              n;
-            if (password) {
-              n = Math.min(32, password.length);
-              for (; i < n; ++i) {
-                hashData[i] = password[i];
-              }
-            }
-            j = 0;
-            while (i < 32) {
-              hashData[i++] = defaultPasswordBytes[j++];
-            }
-            for (j = 0, n = ownerPassword.length; j < n; ++j) {
-              hashData[i++] = ownerPassword[j];
-            }
-            hashData[i++] = flags & 0xff;
-            hashData[i++] = flags >> 8 & 0xff;
-            hashData[i++] = flags >> 16 & 0xff;
-            hashData[i++] = flags >>> 24 & 0xff;
-            for (j = 0, n = fileId.length; j < n; ++j) {
-              hashData[i++] = fileId[j];
-            }
-            if (revision >= 4 && !encryptMetadata) {
-              hashData[i++] = 0xff;
-              hashData[i++] = 0xff;
-              hashData[i++] = 0xff;
-              hashData[i++] = 0xff;
-            }
-            let hash = calculateMD5(hashData, 0, i);
-            const keyLengthInBytes = keyLength >> 3;
-            if (revision >= 3) {
-              for (j = 0; j < 50; ++j) {
-                hash = calculateMD5(hash, 0, keyLengthInBytes);
-              }
-            }
-            const encryptionKey = hash.subarray(0, keyLengthInBytes);
-            let cipher, checkData;
-            if (revision >= 3) {
-              for (i = 0; i < 32; ++i) {
-                hashData[i] = defaultPasswordBytes[i];
-              }
-              for (j = 0, n = fileId.length; j < n; ++j) {
-                hashData[i++] = fileId[j];
-              }
-              cipher = new ARCFourCipher(encryptionKey);
-              checkData = cipher.encryptBlock(calculateMD5(hashData, 0, i));
-              n = encryptionKey.length;
-              const derivedKey = new Uint8Array(n);
-              for (j = 1; j <= 19; ++j) {
-                for (let k = 0; k < n; ++k) {
-                  derivedKey[k] = encryptionKey[k] ^ j;
-                }
-                cipher = new ARCFourCipher(derivedKey);
-                checkData = cipher.encryptBlock(checkData);
-              }
-              for (j = 0, n = checkData.length; j < n; ++j) {
-                if (userPassword[j] !== checkData[j]) {
-                  return null;
-                }
-              }
-            } else {
-              cipher = new ARCFourCipher(encryptionKey);
-              checkData = cipher.encryptBlock(defaultPasswordBytes);
-              for (j = 0, n = checkData.length; j < n; ++j) {
-                if (userPassword[j] !== checkData[j]) {
-                  return null;
-                }
-              }
-            }
-            return encryptionKey;
-          }
-          function decodeUserPassword(password, ownerPassword, revision, keyLength) {
-            const hashData = new Uint8Array(32);
-            let i = 0;
-            const n = Math.min(32, password.length);
-            for (; i < n; ++i) {
-              hashData[i] = password[i];
-            }
-            let j = 0;
-            while (i < 32) {
-              hashData[i++] = defaultPasswordBytes[j++];
-            }
-            let hash = calculateMD5(hashData, 0, i);
-            const keyLengthInBytes = keyLength >> 3;
-            if (revision >= 3) {
-              for (j = 0; j < 50; ++j) {
-                hash = calculateMD5(hash, 0, hash.length);
-              }
-            }
-            let cipher, userPassword;
-            if (revision >= 3) {
-              userPassword = ownerPassword;
-              const derivedKey = new Uint8Array(keyLengthInBytes);
-              for (j = 19; j >= 0; j--) {
-                for (let k = 0; k < keyLengthInBytes; ++k) {
-                  derivedKey[k] = hash[k] ^ j;
-                }
-                cipher = new ARCFourCipher(derivedKey);
-                userPassword = cipher.encryptBlock(userPassword);
-              }
-            } else {
-              cipher = new ARCFourCipher(hash.subarray(0, keyLengthInBytes));
-              userPassword = cipher.encryptBlock(ownerPassword);
-            }
-            return userPassword;
-          }
-          const identityName = _primitives.Name.get("Identity");
-          function buildObjectKey(num, gen, encryptionKey, isAes = false) {
-            const key = new Uint8Array(encryptionKey.length + 9);
-            const n = encryptionKey.length;
-            let i;
-            for (i = 0; i < n; ++i) {
-              key[i] = encryptionKey[i];
-            }
-            key[i++] = num & 0xff;
-            key[i++] = num >> 8 & 0xff;
-            key[i++] = num >> 16 & 0xff;
-            key[i++] = gen & 0xff;
-            key[i++] = gen >> 8 & 0xff;
-            if (isAes) {
-              key[i++] = 0x73;
-              key[i++] = 0x41;
-              key[i++] = 0x6c;
-              key[i++] = 0x54;
-            }
-            const hash = calculateMD5(key, 0, i);
-            return hash.subarray(0, Math.min(encryptionKey.length + 5, 16));
-          }
-          function buildCipherConstructor(cf, name, num, gen, key) {
-            if (!(name instanceof _primitives.Name)) {
-              throw new _util.FormatError("Invalid crypt filter name.");
-            }
-            const cryptFilter = cf.get(name.name);
-            let cfm;
-            if (cryptFilter !== null && cryptFilter !== undefined) {
-              cfm = cryptFilter.get("CFM");
-            }
-            if (!cfm || cfm.name === "None") {
-              return function cipherTransformFactoryBuildCipherConstructorNone() {
-                return new NullCipher();
-              };
-            }
-            if (cfm.name === "V2") {
-              return function cipherTransformFactoryBuildCipherConstructorV2() {
-                return new ARCFourCipher(buildObjectKey(num, gen, key, false));
-              };
-            }
-            if (cfm.name === "AESV2") {
-              return function cipherTransformFactoryBuildCipherConstructorAESV2() {
-                return new AES128Cipher(buildObjectKey(num, gen, key, true));
-              };
-            }
-            if (cfm.name === "AESV3") {
-              return function cipherTransformFactoryBuildCipherConstructorAESV3() {
-                return new AES256Cipher(key);
-              };
-            }
-            throw new _util.FormatError("Unknown crypto method");
-          }
-          class CipherTransformFactory {
-            constructor(dict, fileId, password) {
-              const filter = dict.get("Filter");
-              if (!(0, _primitives.isName)(filter, "Standard")) {
-                throw new _util.FormatError("unknown encryption method");
-              }
-              this.filterName = filter.name;
-              this.dict = dict;
-              const algorithm = dict.get("V");
-              if (!Number.isInteger(algorithm) || algorithm !== 1 && algorithm !== 2 && algorithm !== 4 && algorithm !== 5) {
-                throw new _util.FormatError("unsupported encryption algorithm");
-              }
-              this.algorithm = algorithm;
-              let keyLength = dict.get("Length");
-              if (!keyLength) {
-                if (algorithm <= 3) {
-                  keyLength = 40;
-                } else {
-                  const cfDict = dict.get("CF");
-                  const streamCryptoName = dict.get("StmF");
-                  if (cfDict instanceof _primitives.Dict && streamCryptoName instanceof _primitives.Name) {
-                    cfDict.suppressEncryption = true;
-                    const handlerDict = cfDict.get(streamCryptoName.name);
-                    keyLength = handlerDict?.get("Length") || 128;
-                    if (keyLength < 40) {
-                      keyLength <<= 3;
-                    }
-                  }
-                }
-              }
-              if (!Number.isInteger(keyLength) || keyLength < 40 || keyLength % 8 !== 0) {
-                throw new _util.FormatError("invalid key length");
-              }
-              const ownerBytes = (0, _util.stringToBytes)(dict.get("O")),
-                userBytes = (0, _util.stringToBytes)(dict.get("U"));
-              const ownerPassword = ownerBytes.subarray(0, 32);
-              const userPassword = userBytes.subarray(0, 32);
-              const flags = dict.get("P");
-              const revision = dict.get("R");
-              const encryptMetadata = (algorithm === 4 || algorithm === 5) && dict.get("EncryptMetadata") !== false;
-              this.encryptMetadata = encryptMetadata;
-              const fileIdBytes = (0, _util.stringToBytes)(fileId);
-              let passwordBytes;
-              if (password) {
-                if (revision === 6) {
-                  try {
-                    password = (0, _util.utf8StringToString)(password);
-                  } catch (ex) {
-                    (0, _util.warn)("CipherTransformFactory: Unable to convert UTF8 encoded password.");
-                  }
-                }
-                passwordBytes = (0, _util.stringToBytes)(password);
-              }
-              let encryptionKey;
-              if (algorithm !== 5) {
-                encryptionKey = prepareKeyData(fileIdBytes, passwordBytes, ownerPassword, userPassword, flags, revision, keyLength, encryptMetadata);
-              } else {
-                const ownerValidationSalt = ownerBytes.subarray(32, 40);
-                const ownerKeySalt = ownerBytes.subarray(40, 48);
-                const uBytes = userBytes.subarray(0, 48);
-                const userValidationSalt = userBytes.subarray(32, 40);
-                const userKeySalt = userBytes.subarray(40, 48);
-                const ownerEncryption = (0, _util.stringToBytes)(dict.get("OE"));
-                const userEncryption = (0, _util.stringToBytes)(dict.get("UE"));
-                const perms = (0, _util.stringToBytes)(dict.get("Perms"));
-                encryptionKey = createEncryptionKey20(revision, passwordBytes, ownerPassword, ownerValidationSalt, ownerKeySalt, uBytes, userPassword, userValidationSalt, userKeySalt, ownerEncryption, userEncryption, perms);
-              }
-              if (!encryptionKey && !password) {
-                throw new _util.PasswordException("No password given", _util.PasswordResponses.NEED_PASSWORD);
-              } else if (!encryptionKey && password) {
-                const decodedPassword = decodeUserPassword(passwordBytes, ownerPassword, revision, keyLength);
-                encryptionKey = prepareKeyData(fileIdBytes, decodedPassword, ownerPassword, userPassword, flags, revision, keyLength, encryptMetadata);
-              }
-              if (!encryptionKey) {
-                throw new _util.PasswordException("Incorrect Password", _util.PasswordResponses.INCORRECT_PASSWORD);
-              }
-              this.encryptionKey = encryptionKey;
-              if (algorithm >= 4) {
-                const cf = dict.get("CF");
-                if (cf instanceof _primitives.Dict) {
-                  cf.suppressEncryption = true;
-                }
-                this.cf = cf;
-                this.stmf = dict.get("StmF") || identityName;
-                this.strf = dict.get("StrF") || identityName;
-                this.eff = dict.get("EFF") || this.stmf;
-              }
-            }
-            createCipherTransform(num, gen) {
-              if (this.algorithm === 4 || this.algorithm === 5) {
-                return new CipherTransform(buildCipherConstructor(this.cf, this.strf, num, gen, this.encryptionKey), buildCipherConstructor(this.cf, this.stmf, num, gen, this.encryptionKey));
-              }
-              const key = buildObjectKey(num, gen, this.encryptionKey, false);
-              const cipherConstructor = function buildCipherCipherConstructor() {
-                return new ARCFourCipher(key);
-              };
-              return new CipherTransform(cipherConstructor, cipherConstructor);
-            }
-          }
-          return CipherTransformFactory;
-        }();
-        exports.CipherTransformFactory = CipherTransformFactory;
-
-        /***/
-}),
-/* 69 */
-/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
-
-
-
-        Object.defineProperty(exports, "__esModule", ({
-          value: true
-        }));
-        exports.DecryptStream = void 0;
-        var _decode_stream = __w_pdfjs_require__(18);
-        const chunkSize = 512;
-        class DecryptStream extends _decode_stream.DecodeStream {
-          constructor(str, maybeLength, decrypt) {
-            super(maybeLength);
-            this.str = str;
-            this.dict = str.dict;
-            this.decrypt = decrypt;
-            this.nextChunk = null;
-            this.initialized = false;
-          }
-          readBlock() {
-            let chunk;
-            if (this.initialized) {
-              chunk = this.nextChunk;
-            } else {
-              chunk = this.str.getBytes(chunkSize);
-              this.initialized = true;
-            }
-            if (!chunk || chunk.length === 0) {
-              this.eof = true;
-              return;
-            }
-            this.nextChunk = this.str.getBytes(chunkSize);
-            const hasMoreData = this.nextChunk?.length > 0;
-            const decrypt = this.decrypt;
-            chunk = decrypt(chunk, !hasMoreData);
-            const bufferLength = this.bufferLength,
-              newLength = bufferLength + chunk.length,
-              buffer = this.ensureBuffer(newLength);
-            buffer.set(chunk, bufferLength);
-            this.bufferLength = newLength;
-          }
-        }
-        exports.DecryptStream = DecryptStream;
-
-        /***/
-}),
-/* 70 */
-/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
-
-
-
-        Object.defineProperty(exports, "__esModule", ({
-          value: true
-        }));
         exports.Catalog = void 0;
         var _core_utils = __w_pdfjs_require__(3);
         var _util = __w_pdfjs_require__(2);
         var _primitives = __w_pdfjs_require__(4);
-        var _name_number_tree = __w_pdfjs_require__(71);
+        var _name_number_tree = __w_pdfjs_require__(67);
         var _base_stream = __w_pdfjs_require__(5);
-        var _cleanup_helper = __w_pdfjs_require__(72);
+        var _cleanup_helper = __w_pdfjs_require__(68);
         var _colorspace = __w_pdfjs_require__(12);
-        var _file_spec = __w_pdfjs_require__(73);
+        var _file_spec = __w_pdfjs_require__(69);
         var _image_utils = __w_pdfjs_require__(59);
-        var _metadata_parser = __w_pdfjs_require__(74);
-        var _struct_tree = __w_pdfjs_require__(75);
+        var _metadata_parser = __w_pdfjs_require__(70);
+        var _struct_tree = __w_pdfjs_require__(72);
         function fetchDestination(dest) {
           if (dest instanceof _primitives.Dict) {
             dest = dest.get("D");
@@ -43704,6 +41390,9 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.pageIndexCache = new _primitives.RefSetCache();
             this.nonBlendModesSet = new _primitives.RefSet();
             this.systemFontCache = new Map();
+          }
+          cloneDict() {
+            return this._catDict.clone();
           }
           get version() {
             const version = this._catDict.get("Version");
@@ -43826,11 +41515,12 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             return (0, _util.shadow)(this, "structTreeRoot", structTree);
           }
           _readStructTreeRoot() {
-            const obj = this._catDict.get("StructTreeRoot");
+            const rawObj = this._catDict.getRaw("StructTreeRoot");
+            const obj = this.xref.fetchIfRef(rawObj);
             if (!(obj instanceof _primitives.Dict)) {
               return null;
             }
-            const root = new _struct_tree.StructTreeRoot(obj);
+            const root = new _struct_tree.StructTreeRoot(obj, rawObj);
             root.init();
             return root;
           }
@@ -43890,7 +41580,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               Catalog.parseDestDictionary({
                 destDict: outlineDict,
                 resultObj: data,
-                docBaseUrl: this.pdfManager.docBaseUrl,
+                docBaseUrl: this.baseUrl,
                 docAttachments: this.attachments
               });
               const title = outlineDict.get("Title");
@@ -44468,7 +42158,9 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 return;
               }
               js = (0, _util.stringToPDFString)(js).replaceAll("\x00", "");
-              (javaScript ||= new Map()).set(name, js);
+              if (js) {
+                (javaScript ||= new Map()).set(name, js);
+              }
             }
             if (obj instanceof _primitives.Dict && obj.has("JavaScript")) {
               const nameTree = new _name_number_tree.NameTree(obj.getRaw("JavaScript"), this.xref);
@@ -44482,17 +42174,11 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             }
             return javaScript;
           }
-          get javaScript() {
-            const javaScript = this._collectJavaScript();
-            return (0, _util.shadow)(this, "javaScript", javaScript ? [...javaScript.values()] : null);
-          }
           get jsActions() {
             const javaScript = this._collectJavaScript();
             let actions = (0, _core_utils.collectActions)(this.xref, this._catDict, _util.DocumentActionEventType);
             if (javaScript) {
-              if (!actions) {
-                actions = Object.create(null);
-              }
+              actions ||= Object.create(null);
               for (const [key, val] of javaScript) {
                 if (key in actions) {
                   actions[key].push(val);
@@ -44803,21 +42489,18 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 }
               }
             }
-            return (0, _util.shadow)(this, "baseUrl", null);
+            return (0, _util.shadow)(this, "baseUrl", this.pdfManager.docBaseUrl);
           }
-          static parseDestDictionary(params) {
-            const destDict = params.destDict;
+          static parseDestDictionary({
+            destDict,
+            resultObj,
+            docBaseUrl = null,
+            docAttachments = null
+          }) {
             if (!(destDict instanceof _primitives.Dict)) {
               (0, _util.warn)("parseDestDictionary: `destDict` must be a dictionary.");
               return;
             }
-            const resultObj = params.resultObj;
-            if (typeof resultObj !== "object") {
-              (0, _util.warn)("parseDestDictionary: `resultObj` must be an object.");
-              return;
-            }
-            const docBaseUrl = params.docBaseUrl || null;
-            const docAttachments = params.docAttachments || null;
             let action = destDict.get("A"),
               url,
               dest;
@@ -44997,7 +42680,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
 
         /***/
 }),
-/* 71 */
+/* 67 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -45126,7 +42809,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
 
         /***/
 }),
-/* 72 */
+/* 68 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -45135,16 +42818,18 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           value: true
         }));
         exports.clearGlobalCaches = clearGlobalCaches;
+        var _pattern = __w_pdfjs_require__(50);
         var _primitives = __w_pdfjs_require__(4);
         var _unicode = __w_pdfjs_require__(40);
         function clearGlobalCaches() {
+          (0, _pattern.clearPatternCaches)();
           (0, _primitives.clearPrimitiveCaches)();
           (0, _unicode.clearUnicodeCaches)();
         }
 
         /***/
 }),
-/* 73 */
+/* 69 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -45228,7 +42913,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
 
         /***/
 }),
-/* 74 */
+/* 70 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -45237,7 +42922,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           value: true
         }));
         exports.MetadataParser = void 0;
-        var _xml_parser = __w_pdfjs_require__(67);
+        var _xml_parser = __w_pdfjs_require__(71);
         class MetadataParser {
           constructor(data) {
             data = this._repair(data);
@@ -45337,7 +43022,439 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
 
         /***/
 }),
-/* 75 */
+/* 71 */
+/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
+
+
+
+        Object.defineProperty(exports, "__esModule", ({
+          value: true
+        }));
+        exports.XMLParserErrorCode = exports.XMLParserBase = exports.SimpleXMLParser = exports.SimpleDOMNode = void 0;
+        var _core_utils = __w_pdfjs_require__(3);
+        const XMLParserErrorCode = {
+          NoError: 0,
+          EndOfDocument: -1,
+          UnterminatedCdat: -2,
+          UnterminatedXmlDeclaration: -3,
+          UnterminatedDoctypeDeclaration: -4,
+          UnterminatedComment: -5,
+          MalformedElement: -6,
+          OutOfMemory: -7,
+          UnterminatedAttributeValue: -8,
+          UnterminatedElement: -9,
+          ElementNeverBegun: -10
+        };
+        exports.XMLParserErrorCode = XMLParserErrorCode;
+        function isWhitespace(s, index) {
+          const ch = s[index];
+          return ch === " " || ch === "\n" || ch === "\r" || ch === "\t";
+        }
+        function isWhitespaceString(s) {
+          for (let i = 0, ii = s.length; i < ii; i++) {
+            if (!isWhitespace(s, i)) {
+              return false;
+            }
+          }
+          return true;
+        }
+        class XMLParserBase {
+          _resolveEntities(s) {
+            return s.replaceAll(/&([^;]+);/g, (all, entity) => {
+              if (entity.substring(0, 2) === "#x") {
+                return String.fromCodePoint(parseInt(entity.substring(2), 16));
+              } else if (entity.substring(0, 1) === "#") {
+                return String.fromCodePoint(parseInt(entity.substring(1), 10));
+              }
+              switch (entity) {
+                case "lt":
+                  return "<";
+                case "gt":
+                  return ">";
+                case "amp":
+                  return "&";
+                case "quot":
+                  return '"';
+                case "apos":
+                  return "'";
+              }
+              return this.onResolveEntity(entity);
+            });
+          }
+          _parseContent(s, start) {
+            const attributes = [];
+            let pos = start;
+            function skipWs() {
+              while (pos < s.length && isWhitespace(s, pos)) {
+                ++pos;
+              }
+            }
+            while (pos < s.length && !isWhitespace(s, pos) && s[pos] !== ">" && s[pos] !== "/") {
+              ++pos;
+            }
+            const name = s.substring(start, pos);
+            skipWs();
+            while (pos < s.length && s[pos] !== ">" && s[pos] !== "/" && s[pos] !== "?") {
+              skipWs();
+              let attrName = "",
+                attrValue = "";
+              while (pos < s.length && !isWhitespace(s, pos) && s[pos] !== "=") {
+                attrName += s[pos];
+                ++pos;
+              }
+              skipWs();
+              if (s[pos] !== "=") {
+                return null;
+              }
+              ++pos;
+              skipWs();
+              const attrEndChar = s[pos];
+              if (attrEndChar !== '"' && attrEndChar !== "'") {
+                return null;
+              }
+              const attrEndIndex = s.indexOf(attrEndChar, ++pos);
+              if (attrEndIndex < 0) {
+                return null;
+              }
+              attrValue = s.substring(pos, attrEndIndex);
+              attributes.push({
+                name: attrName,
+                value: this._resolveEntities(attrValue)
+              });
+              pos = attrEndIndex + 1;
+              skipWs();
+            }
+            return {
+              name,
+              attributes,
+              parsed: pos - start
+            };
+          }
+          _parseProcessingInstruction(s, start) {
+            let pos = start;
+            function skipWs() {
+              while (pos < s.length && isWhitespace(s, pos)) {
+                ++pos;
+              }
+            }
+            while (pos < s.length && !isWhitespace(s, pos) && s[pos] !== ">" && s[pos] !== "?" && s[pos] !== "/") {
+              ++pos;
+            }
+            const name = s.substring(start, pos);
+            skipWs();
+            const attrStart = pos;
+            while (pos < s.length && (s[pos] !== "?" || s[pos + 1] !== ">")) {
+              ++pos;
+            }
+            const value = s.substring(attrStart, pos);
+            return {
+              name,
+              value,
+              parsed: pos - start
+            };
+          }
+          parseXml(s) {
+            let i = 0;
+            while (i < s.length) {
+              const ch = s[i];
+              let j = i;
+              if (ch === "<") {
+                ++j;
+                const ch2 = s[j];
+                let q;
+                switch (ch2) {
+                  case "/":
+                    ++j;
+                    q = s.indexOf(">", j);
+                    if (q < 0) {
+                      this.onError(XMLParserErrorCode.UnterminatedElement);
+                      return;
+                    }
+                    this.onEndElement(s.substring(j, q));
+                    j = q + 1;
+                    break;
+                  case "?":
+                    ++j;
+                    const pi = this._parseProcessingInstruction(s, j);
+                    if (s.substring(j + pi.parsed, j + pi.parsed + 2) !== "?>") {
+                      this.onError(XMLParserErrorCode.UnterminatedXmlDeclaration);
+                      return;
+                    }
+                    this.onPi(pi.name, pi.value);
+                    j += pi.parsed + 2;
+                    break;
+                  case "!":
+                    if (s.substring(j + 1, j + 3) === "--") {
+                      q = s.indexOf("-->", j + 3);
+                      if (q < 0) {
+                        this.onError(XMLParserErrorCode.UnterminatedComment);
+                        return;
+                      }
+                      this.onComment(s.substring(j + 3, q));
+                      j = q + 3;
+                    } else if (s.substring(j + 1, j + 8) === "[CDATA[") {
+                      q = s.indexOf("]]>", j + 8);
+                      if (q < 0) {
+                        this.onError(XMLParserErrorCode.UnterminatedCdat);
+                        return;
+                      }
+                      this.onCdata(s.substring(j + 8, q));
+                      j = q + 3;
+                    } else if (s.substring(j + 1, j + 8) === "DOCTYPE") {
+                      const q2 = s.indexOf("[", j + 8);
+                      let complexDoctype = false;
+                      q = s.indexOf(">", j + 8);
+                      if (q < 0) {
+                        this.onError(XMLParserErrorCode.UnterminatedDoctypeDeclaration);
+                        return;
+                      }
+                      if (q2 > 0 && q > q2) {
+                        q = s.indexOf("]>", j + 8);
+                        if (q < 0) {
+                          this.onError(XMLParserErrorCode.UnterminatedDoctypeDeclaration);
+                          return;
+                        }
+                        complexDoctype = true;
+                      }
+                      const doctypeContent = s.substring(j + 8, q + (complexDoctype ? 1 : 0));
+                      this.onDoctype(doctypeContent);
+                      j = q + (complexDoctype ? 2 : 1);
+                    } else {
+                      this.onError(XMLParserErrorCode.MalformedElement);
+                      return;
+                    }
+                    break;
+                  default:
+                    const content = this._parseContent(s, j);
+                    if (content === null) {
+                      this.onError(XMLParserErrorCode.MalformedElement);
+                      return;
+                    }
+                    let isClosed = false;
+                    if (s.substring(j + content.parsed, j + content.parsed + 2) === "/>") {
+                      isClosed = true;
+                    } else if (s.substring(j + content.parsed, j + content.parsed + 1) !== ">") {
+                      this.onError(XMLParserErrorCode.UnterminatedElement);
+                      return;
+                    }
+                    this.onBeginElement(content.name, content.attributes, isClosed);
+                    j += content.parsed + (isClosed ? 2 : 1);
+                    break;
+                }
+              } else {
+                while (j < s.length && s[j] !== "<") {
+                  j++;
+                }
+                const text = s.substring(i, j);
+                this.onText(this._resolveEntities(text));
+              }
+              i = j;
+            }
+          }
+          onResolveEntity(name) {
+            return `&${name};`;
+          }
+          onPi(name, value) { }
+          onComment(text) { }
+          onCdata(text) { }
+          onDoctype(doctypeContent) { }
+          onText(text) { }
+          onBeginElement(name, attributes, isEmpty) { }
+          onEndElement(name) { }
+          onError(code) { }
+        }
+        exports.XMLParserBase = XMLParserBase;
+        class SimpleDOMNode {
+          constructor(nodeName, nodeValue) {
+            this.nodeName = nodeName;
+            this.nodeValue = nodeValue;
+            Object.defineProperty(this, "parentNode", {
+              value: null,
+              writable: true
+            });
+          }
+          get firstChild() {
+            return this.childNodes?.[0];
+          }
+          get nextSibling() {
+            const childNodes = this.parentNode.childNodes;
+            if (!childNodes) {
+              return undefined;
+            }
+            const index = childNodes.indexOf(this);
+            if (index === -1) {
+              return undefined;
+            }
+            return childNodes[index + 1];
+          }
+          get textContent() {
+            if (!this.childNodes) {
+              return this.nodeValue || "";
+            }
+            return this.childNodes.map(function (child) {
+              return child.textContent;
+            }).join("");
+          }
+          get children() {
+            return this.childNodes || [];
+          }
+          hasChildNodes() {
+            return this.childNodes?.length > 0;
+          }
+          searchNode(paths, pos) {
+            if (pos >= paths.length) {
+              return this;
+            }
+            const component = paths[pos];
+            if (component.name.startsWith("#") && pos < paths.length - 1) {
+              return this.searchNode(paths, pos + 1);
+            }
+            const stack = [];
+            let node = this;
+            while (true) {
+              if (component.name === node.nodeName) {
+                if (component.pos === 0) {
+                  const res = node.searchNode(paths, pos + 1);
+                  if (res !== null) {
+                    return res;
+                  }
+                } else if (stack.length === 0) {
+                  return null;
+                } else {
+                  const [parent] = stack.pop();
+                  let siblingPos = 0;
+                  for (const child of parent.childNodes) {
+                    if (component.name === child.nodeName) {
+                      if (siblingPos === component.pos) {
+                        return child.searchNode(paths, pos + 1);
+                      }
+                      siblingPos++;
+                    }
+                  }
+                  return node.searchNode(paths, pos + 1);
+                }
+              }
+              if (node.childNodes?.length > 0) {
+                stack.push([node, 0]);
+                node = node.childNodes[0];
+              } else if (stack.length === 0) {
+                return null;
+              } else {
+                while (stack.length !== 0) {
+                  const [parent, currentPos] = stack.pop();
+                  const newPos = currentPos + 1;
+                  if (newPos < parent.childNodes.length) {
+                    stack.push([parent, newPos]);
+                    node = parent.childNodes[newPos];
+                    break;
+                  }
+                }
+                if (stack.length === 0) {
+                  return null;
+                }
+              }
+            }
+          }
+          dump(buffer) {
+            if (this.nodeName === "#text") {
+              buffer.push((0, _core_utils.encodeToXmlString)(this.nodeValue));
+              return;
+            }
+            buffer.push(`<${this.nodeName}`);
+            if (this.attributes) {
+              for (const attribute of this.attributes) {
+                buffer.push(` ${attribute.name}="${(0, _core_utils.encodeToXmlString)(attribute.value)}"`);
+              }
+            }
+            if (this.hasChildNodes()) {
+              buffer.push(">");
+              for (const child of this.childNodes) {
+                child.dump(buffer);
+              }
+              buffer.push(`</${this.nodeName}>`);
+            } else if (this.nodeValue) {
+              buffer.push(`>${(0, _core_utils.encodeToXmlString)(this.nodeValue)}</${this.nodeName}>`);
+            } else {
+              buffer.push("/>");
+            }
+          }
+        }
+        exports.SimpleDOMNode = SimpleDOMNode;
+        class SimpleXMLParser extends XMLParserBase {
+          constructor({
+            hasAttributes = false,
+            lowerCaseName = false
+          }) {
+            super();
+            this._currentFragment = null;
+            this._stack = null;
+            this._errorCode = XMLParserErrorCode.NoError;
+            this._hasAttributes = hasAttributes;
+            this._lowerCaseName = lowerCaseName;
+          }
+          parseFromString(data) {
+            this._currentFragment = [];
+            this._stack = [];
+            this._errorCode = XMLParserErrorCode.NoError;
+            this.parseXml(data);
+            if (this._errorCode !== XMLParserErrorCode.NoError) {
+              return undefined;
+            }
+            const [documentElement] = this._currentFragment;
+            if (!documentElement) {
+              return undefined;
+            }
+            return {
+              documentElement
+            };
+          }
+          onText(text) {
+            if (isWhitespaceString(text)) {
+              return;
+            }
+            const node = new SimpleDOMNode("#text", text);
+            this._currentFragment.push(node);
+          }
+          onCdata(text) {
+            const node = new SimpleDOMNode("#text", text);
+            this._currentFragment.push(node);
+          }
+          onBeginElement(name, attributes, isEmpty) {
+            if (this._lowerCaseName) {
+              name = name.toLowerCase();
+            }
+            const node = new SimpleDOMNode(name);
+            node.childNodes = [];
+            if (this._hasAttributes) {
+              node.attributes = attributes;
+            }
+            this._currentFragment.push(node);
+            if (isEmpty) {
+              return;
+            }
+            this._stack.push(this._currentFragment);
+            this._currentFragment = node.childNodes;
+          }
+          onEndElement(name) {
+            this._currentFragment = this._stack.pop() || [];
+            const lastElement = this._currentFragment.at(-1);
+            if (!lastElement) {
+              return null;
+            }
+            for (const childNode of lastElement.childNodes) {
+              childNode.parentNode = lastElement;
+            }
+            return lastElement;
+          }
+          onError(code) {
+            this._errorCode = code;
+          }
+        }
+        exports.SimpleXMLParser = SimpleXMLParser;
+
+        /***/
+}),
+/* 72 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -45346,23 +43463,42 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           value: true
         }));
         exports.StructTreeRoot = exports.StructTreePage = void 0;
-        var _primitives = __w_pdfjs_require__(4);
         var _util = __w_pdfjs_require__(2);
-        var _name_number_tree = __w_pdfjs_require__(71);
+        var _primitives = __w_pdfjs_require__(4);
+        var _name_number_tree = __w_pdfjs_require__(67);
+        var _writer = __w_pdfjs_require__(73);
         const MAX_DEPTH = 40;
         const StructElementType = {
-          PAGE_CONTENT: "PAGE_CONTENT",
-          STREAM_CONTENT: "STREAM_CONTENT",
-          OBJECT: "OBJECT",
-          ELEMENT: "ELEMENT"
+          PAGE_CONTENT: 1,
+          STREAM_CONTENT: 2,
+          OBJECT: 3,
+          ANNOTATION: 4,
+          ELEMENT: 5
         };
         class StructTreeRoot {
-          constructor(rootDict) {
+          constructor(rootDict, rootRef) {
             this.dict = rootDict;
+            this.ref = rootRef instanceof _primitives.Ref ? rootRef : null;
             this.roleMap = new Map();
+            this.structParentIds = null;
           }
           init() {
             this.readRoleMap();
+          }
+          #addIdToPage(pageRef, id, type) {
+            if (!(pageRef instanceof _primitives.Ref) || id < 0) {
+              return;
+            }
+            this.structParentIds ||= new _primitives.RefSetCache();
+            let ids = this.structParentIds.get(pageRef);
+            if (!ids) {
+              ids = [];
+              this.structParentIds.put(pageRef, ids);
+            }
+            ids.push([id, type]);
+          }
+          addAnnotationIdToPage(pageRef, id) {
+            this.#addIdToPage(pageRef, id, StructElementType.ANNOTATION);
           }
           readRoleMap() {
             const roleMapDict = this.dict.get("RoleMap");
@@ -45374,6 +43510,431 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 return;
               }
               this.roleMap.set(key, value.name);
+            });
+          }
+          static async canCreateStructureTree({
+            catalogRef,
+            pdfManager,
+            newAnnotationsByPage
+          }) {
+            if (!(catalogRef instanceof _primitives.Ref)) {
+              (0, _util.warn)("Cannot save the struct tree: no catalog reference.");
+              return false;
+            }
+            let nextKey = 0;
+            let hasNothingToUpdate = true;
+            for (const [pageIndex, elements] of newAnnotationsByPage) {
+              const {
+                ref: pageRef
+              } = await pdfManager.getPage(pageIndex);
+              if (!(pageRef instanceof _primitives.Ref)) {
+                (0, _util.warn)(`Cannot save the struct tree: page ${pageIndex} has no ref.`);
+                hasNothingToUpdate = true;
+                break;
+              }
+              for (const element of elements) {
+                if (element.accessibilityData?.type) {
+                  element.parentTreeId = nextKey++;
+                  hasNothingToUpdate = false;
+                }
+              }
+            }
+            if (hasNothingToUpdate) {
+              for (const elements of newAnnotationsByPage.values()) {
+                for (const element of elements) {
+                  delete element.parentTreeId;
+                }
+              }
+              return false;
+            }
+            return true;
+          }
+          static async createStructureTree({
+            newAnnotationsByPage,
+            xref,
+            catalogRef,
+            pdfManager,
+            newRefs
+          }) {
+            const root = pdfManager.catalog.cloneDict();
+            const structTreeRootRef = xref.getNewTemporaryRef();
+            root.set("StructTreeRoot", structTreeRootRef);
+            const buffer = [];
+            await (0, _writer.writeObject)(catalogRef, root, buffer, xref);
+            newRefs.push({
+              ref: catalogRef,
+              data: buffer.join("")
+            });
+            const structTreeRoot = new _primitives.Dict(xref);
+            structTreeRoot.set("Type", _primitives.Name.get("StructTreeRoot"));
+            const parentTreeRef = xref.getNewTemporaryRef();
+            structTreeRoot.set("ParentTree", parentTreeRef);
+            const kids = [];
+            structTreeRoot.set("K", kids);
+            const parentTree = new _primitives.Dict(xref);
+            const nums = [];
+            parentTree.set("Nums", nums);
+            const nextKey = await this.#writeKids({
+              newAnnotationsByPage,
+              structTreeRootRef,
+              kids,
+              nums,
+              xref,
+              pdfManager,
+              newRefs,
+              buffer
+            });
+            structTreeRoot.set("ParentTreeNextKey", nextKey);
+            buffer.length = 0;
+            await (0, _writer.writeObject)(parentTreeRef, parentTree, buffer, xref);
+            newRefs.push({
+              ref: parentTreeRef,
+              data: buffer.join("")
+            });
+            buffer.length = 0;
+            await (0, _writer.writeObject)(structTreeRootRef, structTreeRoot, buffer, xref);
+            newRefs.push({
+              ref: structTreeRootRef,
+              data: buffer.join("")
+            });
+          }
+          async canUpdateStructTree({
+            pdfManager,
+            newAnnotationsByPage
+          }) {
+            if (!this.ref) {
+              (0, _util.warn)("Cannot update the struct tree: no root reference.");
+              return false;
+            }
+            let nextKey = this.dict.get("ParentTreeNextKey");
+            if (!Number.isInteger(nextKey) || nextKey < 0) {
+              (0, _util.warn)("Cannot update the struct tree: invalid next key.");
+              return false;
+            }
+            const parentTree = this.dict.get("ParentTree");
+            if (!(parentTree instanceof _primitives.Dict)) {
+              (0, _util.warn)("Cannot update the struct tree: ParentTree isn't a dict.");
+              return false;
+            }
+            const nums = parentTree.get("Nums");
+            if (!Array.isArray(nums)) {
+              (0, _util.warn)("Cannot update the struct tree: nums isn't an array.");
+              return false;
+            }
+            const {
+              numPages
+            } = pdfManager.catalog;
+            for (const pageIndex of newAnnotationsByPage.keys()) {
+              const {
+                pageDict,
+                ref: pageRef
+              } = await pdfManager.getPage(pageIndex);
+              if (!(pageRef instanceof _primitives.Ref)) {
+                (0, _util.warn)(`Cannot save the struct tree: page ${pageIndex} has no ref.`);
+                return false;
+              }
+              const id = pageDict.get("StructParents");
+              if (!Number.isInteger(id) || id < 0 || id >= numPages) {
+                (0, _util.warn)(`Cannot save the struct tree: page ${pageIndex} has no id.`);
+                return false;
+              }
+            }
+            let hasNothingToUpdate = true;
+            for (const [pageIndex, elements] of newAnnotationsByPage) {
+              const {
+                pageDict
+              } = await pdfManager.getPage(pageIndex);
+              StructTreeRoot.#collectParents({
+                elements,
+                xref: this.dict.xref,
+                pageDict,
+                parentTree
+              });
+              for (const element of elements) {
+                if (element.accessibilityData?.type) {
+                  element.parentTreeId = nextKey++;
+                  hasNothingToUpdate = false;
+                }
+              }
+            }
+            if (hasNothingToUpdate) {
+              for (const elements of newAnnotationsByPage.values()) {
+                for (const element of elements) {
+                  delete element.parentTreeId;
+                  delete element.structTreeParent;
+                }
+              }
+              return false;
+            }
+            return true;
+          }
+          async updateStructureTree({
+            newAnnotationsByPage,
+            pdfManager,
+            newRefs
+          }) {
+            const xref = this.dict.xref;
+            const structTreeRoot = this.dict.clone();
+            const structTreeRootRef = this.ref;
+            let parentTreeRef = structTreeRoot.getRaw("ParentTree");
+            let parentTree;
+            if (parentTreeRef instanceof _primitives.Ref) {
+              parentTree = xref.fetch(parentTreeRef);
+            } else {
+              parentTree = parentTreeRef;
+              parentTreeRef = xref.getNewTemporaryRef();
+              structTreeRoot.set("ParentTree", parentTreeRef);
+            }
+            parentTree = parentTree.clone();
+            let nums = parentTree.getRaw("Nums");
+            let numsRef = null;
+            if (nums instanceof _primitives.Ref) {
+              numsRef = nums;
+              nums = xref.fetch(numsRef);
+            }
+            nums = nums.slice();
+            if (!numsRef) {
+              parentTree.set("Nums", nums);
+            }
+            let kids = structTreeRoot.getRaw("K");
+            let kidsRef = null;
+            if (kids instanceof _primitives.Ref) {
+              kidsRef = kids;
+              kids = xref.fetch(kidsRef);
+            } else {
+              kidsRef = xref.getNewTemporaryRef();
+              structTreeRoot.set("K", kidsRef);
+            }
+            kids = Array.isArray(kids) ? kids.slice() : [kids];
+            const buffer = [];
+            const newNextkey = await StructTreeRoot.#writeKids({
+              newAnnotationsByPage,
+              structTreeRootRef,
+              kids,
+              nums,
+              xref,
+              pdfManager,
+              newRefs,
+              buffer
+            });
+            structTreeRoot.set("ParentTreeNextKey", newNextkey);
+            buffer.length = 0;
+            await (0, _writer.writeObject)(kidsRef, kids, buffer, xref);
+            newRefs.push({
+              ref: kidsRef,
+              data: buffer.join("")
+            });
+            if (numsRef) {
+              buffer.length = 0;
+              await (0, _writer.writeObject)(numsRef, nums, buffer, xref);
+              newRefs.push({
+                ref: numsRef,
+                data: buffer.join("")
+              });
+            }
+            buffer.length = 0;
+            await (0, _writer.writeObject)(parentTreeRef, parentTree, buffer, xref);
+            newRefs.push({
+              ref: parentTreeRef,
+              data: buffer.join("")
+            });
+            buffer.length = 0;
+            await (0, _writer.writeObject)(structTreeRootRef, structTreeRoot, buffer, xref);
+            newRefs.push({
+              ref: structTreeRootRef,
+              data: buffer.join("")
+            });
+          }
+          static async #writeKids({
+            newAnnotationsByPage,
+            structTreeRootRef,
+            kids,
+            nums,
+            xref,
+            pdfManager,
+            newRefs,
+            buffer
+          }) {
+            const objr = _primitives.Name.get("OBJR");
+            let nextKey = -Infinity;
+            for (const [pageIndex, elements] of newAnnotationsByPage) {
+              const {
+                ref: pageRef
+              } = await pdfManager.getPage(pageIndex);
+              for (const {
+                accessibilityData: {
+                  type,
+                  title,
+                  lang,
+                  alt,
+                  expanded,
+                  actualText
+                },
+                ref,
+                parentTreeId,
+                structTreeParent
+              } of elements) {
+                nextKey = Math.max(nextKey, parentTreeId);
+                const tagRef = xref.getNewTemporaryRef();
+                const tagDict = new _primitives.Dict(xref);
+                tagDict.set("S", _primitives.Name.get(type));
+                if (title) {
+                  tagDict.set("T", title);
+                }
+                if (lang) {
+                  tagDict.set("Lang", lang);
+                }
+                if (alt) {
+                  tagDict.set("Alt", alt);
+                }
+                if (expanded) {
+                  tagDict.set("E", expanded);
+                }
+                if (actualText) {
+                  tagDict.set("ActualText", actualText);
+                }
+                if (structTreeParent) {
+                  await this.#updateParentTag({
+                    structTreeParent,
+                    tagDict,
+                    newTagRef: tagRef,
+                    fallbackRef: structTreeRootRef,
+                    xref,
+                    newRefs,
+                    buffer
+                  });
+                } else {
+                  tagDict.set("P", structTreeRootRef);
+                }
+                const objDict = new _primitives.Dict(xref);
+                tagDict.set("K", objDict);
+                objDict.set("Type", objr);
+                objDict.set("Pg", pageRef);
+                objDict.set("Obj", ref);
+                buffer.length = 0;
+                await (0, _writer.writeObject)(tagRef, tagDict, buffer, xref);
+                newRefs.push({
+                  ref: tagRef,
+                  data: buffer.join("")
+                });
+                nums.push(parentTreeId, tagRef);
+                kids.push(tagRef);
+              }
+            }
+            return nextKey + 1;
+          }
+          static #collectParents({
+            elements,
+            xref,
+            pageDict,
+            parentTree
+          }) {
+            const idToElement = new Map();
+            for (const element of elements) {
+              if (element.structTreeParentId) {
+                const id = parseInt(element.structTreeParentId.split("_mc")[1], 10);
+                idToElement.set(id, element);
+              }
+            }
+            const id = pageDict.get("StructParents");
+            const numberTree = new _name_number_tree.NumberTree(parentTree, xref);
+            const parentArray = numberTree.get(id);
+            if (!Array.isArray(parentArray)) {
+              return;
+            }
+            const updateElement = (kid, pageKid, kidRef) => {
+              const element = idToElement.get(kid);
+              if (element) {
+                const parentRef = pageKid.getRaw("P");
+                const parentDict = xref.fetchIfRef(parentRef);
+                if (parentRef instanceof _primitives.Ref && parentDict instanceof _primitives.Dict) {
+                  element.structTreeParent = {
+                    ref: kidRef,
+                    dict: pageKid
+                  };
+                }
+                return true;
+              }
+              return false;
+            };
+            for (const kidRef of parentArray) {
+              if (!(kidRef instanceof _primitives.Ref)) {
+                continue;
+              }
+              const pageKid = xref.fetch(kidRef);
+              const k = pageKid.get("K");
+              if (Number.isInteger(k)) {
+                updateElement(k, pageKid, kidRef);
+                continue;
+              }
+              if (!Array.isArray(k)) {
+                continue;
+              }
+              for (let kid of k) {
+                kid = xref.fetchIfRef(kid);
+                if (Number.isInteger(kid) && updateElement(kid, pageKid, kidRef)) {
+                  break;
+                }
+              }
+            }
+          }
+          static async #updateParentTag({
+            structTreeParent: {
+              ref,
+              dict
+            },
+            tagDict,
+            newTagRef,
+            fallbackRef,
+            xref,
+            newRefs,
+            buffer
+          }) {
+            const parentRef = dict.getRaw("P");
+            let parentDict = xref.fetchIfRef(parentRef);
+            tagDict.set("P", parentRef);
+            let saveParentDict = false;
+            let parentKids;
+            let parentKidsRef = parentDict.getRaw("K");
+            if (!(parentKidsRef instanceof _primitives.Ref)) {
+              parentKids = parentKidsRef;
+              parentKidsRef = xref.getNewTemporaryRef();
+              parentDict = parentDict.clone();
+              parentDict.set("K", parentKidsRef);
+              saveParentDict = true;
+            } else {
+              parentKids = xref.fetch(parentKidsRef);
+            }
+            if (Array.isArray(parentKids)) {
+              const index = parentKids.indexOf(ref);
+              if (index >= 0) {
+                parentKids = parentKids.slice();
+                parentKids.splice(index + 1, 0, newTagRef);
+              } else {
+                (0, _util.warn)("Cannot update the struct tree: parent kid not found.");
+                tagDict.set("P", fallbackRef);
+                return;
+              }
+            } else if (parentKids instanceof _primitives.Dict) {
+              parentKids = [parentKidsRef, newTagRef];
+              parentKidsRef = xref.getNewTemporaryRef();
+              parentDict.set("K", parentKidsRef);
+              saveParentDict = true;
+            }
+            buffer.length = 0;
+            await (0, _writer.writeObject)(parentKidsRef, parentKids, buffer, xref);
+            newRefs.push({
+              ref: parentKidsRef,
+              data: buffer.join("")
+            });
+            if (!saveParentDict) {
+              return;
+            }
+            buffer.length = 0;
+            await (0, _writer.writeObject)(parentRef, parentDict, buffer, xref);
+            newRefs.push({
+              ref: parentRef,
+              data: buffer.join("")
             });
           }
         }
@@ -45446,9 +44007,10 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               if (this.tree.pageDict.objId !== pageObjId) {
                 return null;
               }
+              const kidRef = kidDict.getRaw("Stm");
               return new StructElement({
                 type: StructElementType.STREAM_CONTENT,
-                refObjId: kidDict.getRaw("Stm") instanceof _primitives.Ref ? kidDict.getRaw("Stm").toString() : null,
+                refObjId: kidRef instanceof _primitives.Ref ? kidRef.toString() : null,
                 pageObjId,
                 mcid: kidDict.get("MCID")
               });
@@ -45457,9 +44019,10 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               if (this.tree.pageDict.objId !== pageObjId) {
                 return null;
               }
+              const kidRef = kidDict.getRaw("Obj");
               return new StructElement({
                 type: StructElementType.OBJECT,
-                refObjId: kidDict.getRaw("Obj") instanceof _primitives.Ref ? kidDict.getRaw("Obj").toString() : null,
+                refObjId: kidRef instanceof _primitives.Ref ? kidRef.toString() : null,
                 pageObjId
               });
             }
@@ -45492,7 +44055,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.pageDict = pageDict;
             this.nodes = [];
           }
-          parse() {
+          parse(pageRef) {
             if (!this.root || !this.rootDict) {
               return;
             }
@@ -45501,18 +44064,32 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               return;
             }
             const id = this.pageDict.get("StructParents");
-            if (!Number.isInteger(id)) {
-              return;
-            }
-            const numberTree = new _name_number_tree.NumberTree(parentTree, this.rootDict.xref);
-            const parentArray = numberTree.get(id);
-            if (!Array.isArray(parentArray)) {
+            const ids = pageRef instanceof _primitives.Ref && this.root.structParentIds?.get(pageRef);
+            if (!Number.isInteger(id) && !ids) {
               return;
             }
             const map = new Map();
-            for (const ref of parentArray) {
-              if (ref instanceof _primitives.Ref) {
-                this.addNode(this.rootDict.xref.fetch(ref), map);
+            const numberTree = new _name_number_tree.NumberTree(parentTree, this.rootDict.xref);
+            if (Number.isInteger(id)) {
+              const parentArray = numberTree.get(id);
+              if (Array.isArray(parentArray)) {
+                for (const ref of parentArray) {
+                  if (ref instanceof _primitives.Ref) {
+                    this.addNode(this.rootDict.xref.fetch(ref), map);
+                  }
+                }
+              }
+            }
+            if (!ids) {
+              return;
+            }
+            for (const [elemId, type] of ids) {
+              const obj = numberTree.get(elemId);
+              if (obj) {
+                const elem = this.addNode(this.rootDict.xref.fetchIfRef(obj), map);
+                if (elem?.kids?.length === 1 && elem.kids[0].type === StructElementType.OBJECT) {
+                  elem.kids[0].type = type;
+                }
               }
             }
           }
@@ -45607,6 +44184,11 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                     type: "object",
                     id: kid.refObjId
                   });
+                } else if (kid.type === StructElementType.ANNOTATION) {
+                  obj.children.push({
+                    type: "annotation",
+                    id: `${_util.AnnotationPrefix}${kid.refObjId}`
+                  });
                 }
               }
             }
@@ -45623,6 +44205,1689 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           }
         }
         exports.StructTreePage = StructTreePage;
+
+        /***/
+}),
+/* 73 */
+/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
+
+
+
+        Object.defineProperty(exports, "__esModule", ({
+          value: true
+        }));
+        exports.incrementalUpdate = incrementalUpdate;
+        exports.writeDict = writeDict;
+        exports.writeObject = writeObject;
+        var _util = __w_pdfjs_require__(2);
+        var _primitives = __w_pdfjs_require__(4);
+        var _core_utils = __w_pdfjs_require__(3);
+        var _xml_parser = __w_pdfjs_require__(71);
+        var _base_stream = __w_pdfjs_require__(5);
+        var _crypto = __w_pdfjs_require__(74);
+        async function writeObject(ref, obj, buffer, {
+          encrypt = null
+        }) {
+          const transform = encrypt?.createCipherTransform(ref.num, ref.gen);
+          buffer.push(`${ref.num} ${ref.gen} obj\n`);
+          if (obj instanceof _primitives.Dict) {
+            await writeDict(obj, buffer, transform);
+          } else if (obj instanceof _base_stream.BaseStream) {
+            await writeStream(obj, buffer, transform);
+          } else if (Array.isArray(obj)) {
+            await writeArray(obj, buffer, transform);
+          }
+          buffer.push("\nendobj\n");
+        }
+        async function writeDict(dict, buffer, transform) {
+          buffer.push("<<");
+          for (const key of dict.getKeys()) {
+            buffer.push(` /${(0, _core_utils.escapePDFName)(key)} `);
+            await writeValue(dict.getRaw(key), buffer, transform);
+          }
+          buffer.push(">>");
+        }
+        async function writeStream(stream, buffer, transform) {
+          let string = stream.getString();
+          const {
+            dict
+          } = stream;
+          const [filter, params] = await Promise.all([dict.getAsync("Filter"), dict.getAsync("DecodeParms")]);
+          const filterZero = Array.isArray(filter) ? await dict.xref.fetchIfRefAsync(filter[0]) : filter;
+          const isFilterZeroFlateDecode = (0, _primitives.isName)(filterZero, "FlateDecode");
+          const MIN_LENGTH_FOR_COMPRESSING = 256;
+          if (typeof CompressionStream !== "undefined" && (string.length >= MIN_LENGTH_FOR_COMPRESSING || isFilterZeroFlateDecode)) {
+            try {
+              const byteArray = (0, _util.stringToBytes)(string);
+              const cs = new CompressionStream("deflate");
+              const writer = cs.writable.getWriter();
+              writer.write(byteArray);
+              writer.close();
+              const buf = await new Response(cs.readable).arrayBuffer();
+              string = (0, _util.bytesToString)(new Uint8Array(buf));
+              let newFilter, newParams;
+              if (!filter) {
+                newFilter = _primitives.Name.get("FlateDecode");
+              } else if (!isFilterZeroFlateDecode) {
+                newFilter = Array.isArray(filter) ? [_primitives.Name.get("FlateDecode"), ...filter] : [_primitives.Name.get("FlateDecode"), filter];
+                if (params) {
+                  newParams = Array.isArray(params) ? [null, ...params] : [null, params];
+                }
+              }
+              if (newFilter) {
+                dict.set("Filter", newFilter);
+              }
+              if (newParams) {
+                dict.set("DecodeParms", newParams);
+              }
+            } catch (ex) {
+              (0, _util.info)(`writeStream - cannot compress data: "${ex}".`);
+            }
+          }
+          if (transform) {
+            string = transform.encryptString(string);
+          }
+          dict.set("Length", string.length);
+          await writeDict(dict, buffer, transform);
+          buffer.push(" stream\n", string, "\nendstream");
+        }
+        async function writeArray(array, buffer, transform) {
+          buffer.push("[");
+          let first = true;
+          for (const val of array) {
+            if (!first) {
+              buffer.push(" ");
+            } else {
+              first = false;
+            }
+            await writeValue(val, buffer, transform);
+          }
+          buffer.push("]");
+        }
+        async function writeValue(value, buffer, transform) {
+          if (value instanceof _primitives.Name) {
+            buffer.push(`/${(0, _core_utils.escapePDFName)(value.name)}`);
+          } else if (value instanceof _primitives.Ref) {
+            buffer.push(`${value.num} ${value.gen} R`);
+          } else if (Array.isArray(value)) {
+            await writeArray(value, buffer, transform);
+          } else if (typeof value === "string") {
+            if (transform) {
+              value = transform.encryptString(value);
+            }
+            buffer.push(`(${(0, _core_utils.escapeString)(value)})`);
+          } else if (typeof value === "number") {
+            buffer.push((0, _core_utils.numberToString)(value));
+          } else if (typeof value === "boolean") {
+            buffer.push(value.toString());
+          } else if (value instanceof _primitives.Dict) {
+            await writeDict(value, buffer, transform);
+          } else if (value instanceof _base_stream.BaseStream) {
+            await writeStream(value, buffer, transform);
+          } else if (value === null) {
+            buffer.push("null");
+          } else {
+            (0, _util.warn)(`Unhandled value in writer: ${typeof value}, please file a bug.`);
+          }
+        }
+        function writeInt(number, size, offset, buffer) {
+          for (let i = size + offset - 1; i > offset - 1; i--) {
+            buffer[i] = number & 0xff;
+            number >>= 8;
+          }
+          return offset + size;
+        }
+        function writeString(string, offset, buffer) {
+          for (let i = 0, len = string.length; i < len; i++) {
+            buffer[offset + i] = string.charCodeAt(i) & 0xff;
+          }
+        }
+        function computeMD5(filesize, xrefInfo) {
+          const time = Math.floor(Date.now() / 1000);
+          const filename = xrefInfo.filename || "";
+          const md5Buffer = [time.toString(), filename, filesize.toString()];
+          let md5BufferLen = md5Buffer.reduce((a, str) => a + str.length, 0);
+          for (const value of Object.values(xrefInfo.info)) {
+            md5Buffer.push(value);
+            md5BufferLen += value.length;
+          }
+          const array = new Uint8Array(md5BufferLen);
+          let offset = 0;
+          for (const str of md5Buffer) {
+            writeString(str, offset, array);
+            offset += str.length;
+          }
+          return (0, _util.bytesToString)((0, _crypto.calculateMD5)(array));
+        }
+        function writeXFADataForAcroform(str, newRefs) {
+          const xml = new _xml_parser.SimpleXMLParser({
+            hasAttributes: true
+          }).parseFromString(str);
+          for (const {
+            xfa
+          } of newRefs) {
+            if (!xfa) {
+              continue;
+            }
+            const {
+              path,
+              value
+            } = xfa;
+            if (!path) {
+              continue;
+            }
+            const nodePath = (0, _core_utils.parseXFAPath)(path);
+            let node = xml.documentElement.searchNode(nodePath, 0);
+            if (!node && nodePath.length > 1) {
+              node = xml.documentElement.searchNode([nodePath.at(-1)], 0);
+            }
+            if (node) {
+              node.childNodes = Array.isArray(value) ? value.map(val => new _xml_parser.SimpleDOMNode("value", val)) : [new _xml_parser.SimpleDOMNode("#text", value)];
+            } else {
+              (0, _util.warn)(`Node not found for path: ${path}`);
+            }
+          }
+          const buffer = [];
+          xml.documentElement.dump(buffer);
+          return buffer.join("");
+        }
+        async function updateAcroform({
+          xref,
+          acroForm,
+          acroFormRef,
+          hasXfa,
+          hasXfaDatasetsEntry,
+          xfaDatasetsRef,
+          needAppearances,
+          newRefs
+        }) {
+          if (hasXfa && !hasXfaDatasetsEntry && !xfaDatasetsRef) {
+            (0, _util.warn)("XFA - Cannot save it");
+          }
+          if (!needAppearances && (!hasXfa || !xfaDatasetsRef || hasXfaDatasetsEntry)) {
+            return;
+          }
+          const dict = acroForm.clone();
+          if (hasXfa && !hasXfaDatasetsEntry) {
+            const newXfa = acroForm.get("XFA").slice();
+            newXfa.splice(2, 0, "datasets");
+            newXfa.splice(3, 0, xfaDatasetsRef);
+            dict.set("XFA", newXfa);
+          }
+          if (needAppearances) {
+            dict.set("NeedAppearances", true);
+          }
+          const buffer = [];
+          await writeObject(acroFormRef, dict, buffer, xref);
+          newRefs.push({
+            ref: acroFormRef,
+            data: buffer.join("")
+          });
+        }
+        function updateXFA({
+          xfaData,
+          xfaDatasetsRef,
+          newRefs,
+          xref
+        }) {
+          if (xfaData === null) {
+            const datasets = xref.fetchIfRef(xfaDatasetsRef);
+            xfaData = writeXFADataForAcroform(datasets.getString(), newRefs);
+          }
+          const encrypt = xref.encrypt;
+          if (encrypt) {
+            const transform = encrypt.createCipherTransform(xfaDatasetsRef.num, xfaDatasetsRef.gen);
+            xfaData = transform.encryptString(xfaData);
+          }
+          const data = `${xfaDatasetsRef.num} ${xfaDatasetsRef.gen} obj\n` + `<< /Type /EmbeddedFile /Length ${xfaData.length}>>\nstream\n` + xfaData + "\nendstream\nendobj\n";
+          newRefs.push({
+            ref: xfaDatasetsRef,
+            data
+          });
+        }
+        async function incrementalUpdate({
+          originalData,
+          xrefInfo,
+          newRefs,
+          xref = null,
+          hasXfa = false,
+          xfaDatasetsRef = null,
+          hasXfaDatasetsEntry = false,
+          needAppearances,
+          acroFormRef = null,
+          acroForm = null,
+          xfaData = null
+        }) {
+          await updateAcroform({
+            xref,
+            acroForm,
+            acroFormRef,
+            hasXfa,
+            hasXfaDatasetsEntry,
+            xfaDatasetsRef,
+            needAppearances,
+            newRefs
+          });
+          if (hasXfa) {
+            updateXFA({
+              xfaData,
+              xfaDatasetsRef,
+              newRefs,
+              xref
+            });
+          }
+          const newXref = new _primitives.Dict(null);
+          const refForXrefTable = xrefInfo.newRef;
+          let buffer, baseOffset;
+          const lastByte = originalData.at(-1);
+          if (lastByte === 0x0a || lastByte === 0x0d) {
+            buffer = [];
+            baseOffset = originalData.length;
+          } else {
+            buffer = ["\n"];
+            baseOffset = originalData.length + 1;
+          }
+          newXref.set("Size", refForXrefTable.num + 1);
+          newXref.set("Prev", xrefInfo.startXRef);
+          newXref.set("Type", _primitives.Name.get("XRef"));
+          if (xrefInfo.rootRef !== null) {
+            newXref.set("Root", xrefInfo.rootRef);
+          }
+          if (xrefInfo.infoRef !== null) {
+            newXref.set("Info", xrefInfo.infoRef);
+          }
+          if (xrefInfo.encryptRef !== null) {
+            newXref.set("Encrypt", xrefInfo.encryptRef);
+          }
+          newRefs.push({
+            ref: refForXrefTable,
+            data: ""
+          });
+          newRefs = newRefs.sort((a, b) => {
+            return a.ref.num - b.ref.num;
+          });
+          const xrefTableData = [[0, 1, 0xffff]];
+          const indexes = [0, 1];
+          let maxOffset = 0;
+          for (const {
+            ref,
+            data
+          } of newRefs) {
+            maxOffset = Math.max(maxOffset, baseOffset);
+            xrefTableData.push([1, baseOffset, Math.min(ref.gen, 0xffff)]);
+            baseOffset += data.length;
+            indexes.push(ref.num, 1);
+            buffer.push(data);
+          }
+          newXref.set("Index", indexes);
+          if (Array.isArray(xrefInfo.fileIds) && xrefInfo.fileIds.length > 0) {
+            const md5 = computeMD5(baseOffset, xrefInfo);
+            newXref.set("ID", [xrefInfo.fileIds[0], md5]);
+          }
+          const offsetSize = Math.ceil(Math.log2(maxOffset) / 8);
+          const sizes = [1, offsetSize, 2];
+          const structSize = sizes[0] + sizes[1] + sizes[2];
+          const tableLength = structSize * xrefTableData.length;
+          newXref.set("W", sizes);
+          newXref.set("Length", tableLength);
+          buffer.push(`${refForXrefTable.num} ${refForXrefTable.gen} obj\n`);
+          await writeDict(newXref, buffer, null);
+          buffer.push(" stream\n");
+          const bufferLen = buffer.reduce((a, str) => a + str.length, 0);
+          const footer = `\nendstream\nendobj\nstartxref\n${baseOffset}\n%%EOF\n`;
+          const array = new Uint8Array(originalData.length + bufferLen + tableLength + footer.length);
+          array.set(originalData);
+          let offset = originalData.length;
+          for (const str of buffer) {
+            writeString(str, offset, array);
+            offset += str.length;
+          }
+          for (const [type, objOffset, gen] of xrefTableData) {
+            offset = writeInt(type, sizes[0], offset, array);
+            offset = writeInt(objOffset, sizes[1], offset, array);
+            offset = writeInt(gen, sizes[2], offset, array);
+          }
+          writeString(footer, offset, array);
+          return array;
+        }
+
+        /***/
+}),
+/* 74 */
+/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
+
+
+
+        Object.defineProperty(exports, "__esModule", ({
+          value: true
+        }));
+        exports.calculateSHA256 = exports.calculateMD5 = exports.PDF20 = exports.PDF17 = exports.CipherTransformFactory = exports.ARCFourCipher = exports.AES256Cipher = exports.AES128Cipher = void 0;
+        exports.calculateSHA384 = calculateSHA384;
+        exports.calculateSHA512 = void 0;
+        var _util = __w_pdfjs_require__(2);
+        var _primitives = __w_pdfjs_require__(4);
+        var _decrypt_stream = __w_pdfjs_require__(75);
+        class ARCFourCipher {
+          constructor(key) {
+            this.a = 0;
+            this.b = 0;
+            const s = new Uint8Array(256);
+            const keyLength = key.length;
+            for (let i = 0; i < 256; ++i) {
+              s[i] = i;
+            }
+            for (let i = 0, j = 0; i < 256; ++i) {
+              const tmp = s[i];
+              j = j + tmp + key[i % keyLength] & 0xff;
+              s[i] = s[j];
+              s[j] = tmp;
+            }
+            this.s = s;
+          }
+          encryptBlock(data) {
+            let a = this.a,
+              b = this.b;
+            const s = this.s;
+            const n = data.length;
+            const output = new Uint8Array(n);
+            for (let i = 0; i < n; ++i) {
+              a = a + 1 & 0xff;
+              const tmp = s[a];
+              b = b + tmp & 0xff;
+              const tmp2 = s[b];
+              s[a] = tmp2;
+              s[b] = tmp;
+              output[i] = data[i] ^ s[tmp + tmp2 & 0xff];
+            }
+            this.a = a;
+            this.b = b;
+            return output;
+          }
+          decryptBlock(data) {
+            return this.encryptBlock(data);
+          }
+          encrypt(data) {
+            return this.encryptBlock(data);
+          }
+        }
+        exports.ARCFourCipher = ARCFourCipher;
+        const calculateMD5 = function calculateMD5Closure() {
+          const r = new Uint8Array([7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21]);
+          const k = new Int32Array([-680876936, -389564586, 606105819, -1044525330, -176418897, 1200080426, -1473231341, -45705983, 1770035416, -1958414417, -42063, -1990404162, 1804603682, -40341101, -1502002290, 1236535329, -165796510, -1069501632, 643717713, -373897302, -701558691, 38016083, -660478335, -405537848, 568446438, -1019803690, -187363961, 1163531501, -1444681467, -51403784, 1735328473, -1926607734, -378558, -2022574463, 1839030562, -35309556, -1530992060, 1272893353, -155497632, -1094730640, 681279174, -358537222, -722521979, 76029189, -640364487, -421815835, 530742520, -995338651, -198630844, 1126891415, -1416354905, -57434055, 1700485571, -1894986606, -1051523, -2054922799, 1873313359, -30611744, -1560198380, 1309151649, -145523070, -1120210379, 718787259, -343485551]);
+          function hash(data, offset, length) {
+            let h0 = 1732584193,
+              h1 = -271733879,
+              h2 = -1732584194,
+              h3 = 271733878;
+            const paddedLength = length + 72 & ~63;
+            const padded = new Uint8Array(paddedLength);
+            let i, j;
+            for (i = 0; i < length; ++i) {
+              padded[i] = data[offset++];
+            }
+            padded[i++] = 0x80;
+            const n = paddedLength - 8;
+            while (i < n) {
+              padded[i++] = 0;
+            }
+            padded[i++] = length << 3 & 0xff;
+            padded[i++] = length >> 5 & 0xff;
+            padded[i++] = length >> 13 & 0xff;
+            padded[i++] = length >> 21 & 0xff;
+            padded[i++] = length >>> 29 & 0xff;
+            padded[i++] = 0;
+            padded[i++] = 0;
+            padded[i++] = 0;
+            const w = new Int32Array(16);
+            for (i = 0; i < paddedLength;) {
+              for (j = 0; j < 16; ++j, i += 4) {
+                w[j] = padded[i] | padded[i + 1] << 8 | padded[i + 2] << 16 | padded[i + 3] << 24;
+              }
+              let a = h0,
+                b = h1,
+                c = h2,
+                d = h3,
+                f,
+                g;
+              for (j = 0; j < 64; ++j) {
+                if (j < 16) {
+                  f = b & c | ~b & d;
+                  g = j;
+                } else if (j < 32) {
+                  f = d & b | ~d & c;
+                  g = 5 * j + 1 & 15;
+                } else if (j < 48) {
+                  f = b ^ c ^ d;
+                  g = 3 * j + 5 & 15;
+                } else {
+                  f = c ^ (b | ~d);
+                  g = 7 * j & 15;
+                }
+                const tmp = d,
+                  rotateArg = a + f + k[j] + w[g] | 0,
+                  rotate = r[j];
+                d = c;
+                c = b;
+                b = b + (rotateArg << rotate | rotateArg >>> 32 - rotate) | 0;
+                a = tmp;
+              }
+              h0 = h0 + a | 0;
+              h1 = h1 + b | 0;
+              h2 = h2 + c | 0;
+              h3 = h3 + d | 0;
+            }
+            return new Uint8Array([h0 & 0xFF, h0 >> 8 & 0xFF, h0 >> 16 & 0xFF, h0 >>> 24 & 0xFF, h1 & 0xFF, h1 >> 8 & 0xFF, h1 >> 16 & 0xFF, h1 >>> 24 & 0xFF, h2 & 0xFF, h2 >> 8 & 0xFF, h2 >> 16 & 0xFF, h2 >>> 24 & 0xFF, h3 & 0xFF, h3 >> 8 & 0xFF, h3 >> 16 & 0xFF, h3 >>> 24 & 0xFF]);
+          }
+          return hash;
+        }();
+        exports.calculateMD5 = calculateMD5;
+        class Word64 {
+          constructor(highInteger, lowInteger) {
+            this.high = highInteger | 0;
+            this.low = lowInteger | 0;
+          }
+          and(word) {
+            this.high &= word.high;
+            this.low &= word.low;
+          }
+          xor(word) {
+            this.high ^= word.high;
+            this.low ^= word.low;
+          }
+          or(word) {
+            this.high |= word.high;
+            this.low |= word.low;
+          }
+          shiftRight(places) {
+            if (places >= 32) {
+              this.low = this.high >>> places - 32 | 0;
+              this.high = 0;
+            } else {
+              this.low = this.low >>> places | this.high << 32 - places;
+              this.high = this.high >>> places | 0;
+            }
+          }
+          shiftLeft(places) {
+            if (places >= 32) {
+              this.high = this.low << places - 32;
+              this.low = 0;
+            } else {
+              this.high = this.high << places | this.low >>> 32 - places;
+              this.low <<= places;
+            }
+          }
+          rotateRight(places) {
+            let low, high;
+            if (places & 32) {
+              high = this.low;
+              low = this.high;
+            } else {
+              low = this.low;
+              high = this.high;
+            }
+            places &= 31;
+            this.low = low >>> places | high << 32 - places;
+            this.high = high >>> places | low << 32 - places;
+          }
+          not() {
+            this.high = ~this.high;
+            this.low = ~this.low;
+          }
+          add(word) {
+            const lowAdd = (this.low >>> 0) + (word.low >>> 0);
+            let highAdd = (this.high >>> 0) + (word.high >>> 0);
+            if (lowAdd > 0xffffffff) {
+              highAdd += 1;
+            }
+            this.low = lowAdd | 0;
+            this.high = highAdd | 0;
+          }
+          copyTo(bytes, offset) {
+            bytes[offset] = this.high >>> 24 & 0xff;
+            bytes[offset + 1] = this.high >> 16 & 0xff;
+            bytes[offset + 2] = this.high >> 8 & 0xff;
+            bytes[offset + 3] = this.high & 0xff;
+            bytes[offset + 4] = this.low >>> 24 & 0xff;
+            bytes[offset + 5] = this.low >> 16 & 0xff;
+            bytes[offset + 6] = this.low >> 8 & 0xff;
+            bytes[offset + 7] = this.low & 0xff;
+          }
+          assign(word) {
+            this.high = word.high;
+            this.low = word.low;
+          }
+        }
+        const calculateSHA256 = function calculateSHA256Closure() {
+          function rotr(x, n) {
+            return x >>> n | x << 32 - n;
+          }
+          function ch(x, y, z) {
+            return x & y ^ ~x & z;
+          }
+          function maj(x, y, z) {
+            return x & y ^ x & z ^ y & z;
+          }
+          function sigma(x) {
+            return rotr(x, 2) ^ rotr(x, 13) ^ rotr(x, 22);
+          }
+          function sigmaPrime(x) {
+            return rotr(x, 6) ^ rotr(x, 11) ^ rotr(x, 25);
+          }
+          function littleSigma(x) {
+            return rotr(x, 7) ^ rotr(x, 18) ^ x >>> 3;
+          }
+          function littleSigmaPrime(x) {
+            return rotr(x, 17) ^ rotr(x, 19) ^ x >>> 10;
+          }
+          const k = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2];
+          function hash(data, offset, length) {
+            let h0 = 0x6a09e667,
+              h1 = 0xbb67ae85,
+              h2 = 0x3c6ef372,
+              h3 = 0xa54ff53a,
+              h4 = 0x510e527f,
+              h5 = 0x9b05688c,
+              h6 = 0x1f83d9ab,
+              h7 = 0x5be0cd19;
+            const paddedLength = Math.ceil((length + 9) / 64) * 64;
+            const padded = new Uint8Array(paddedLength);
+            let i, j;
+            for (i = 0; i < length; ++i) {
+              padded[i] = data[offset++];
+            }
+            padded[i++] = 0x80;
+            const n = paddedLength - 8;
+            while (i < n) {
+              padded[i++] = 0;
+            }
+            padded[i++] = 0;
+            padded[i++] = 0;
+            padded[i++] = 0;
+            padded[i++] = length >>> 29 & 0xff;
+            padded[i++] = length >> 21 & 0xff;
+            padded[i++] = length >> 13 & 0xff;
+            padded[i++] = length >> 5 & 0xff;
+            padded[i++] = length << 3 & 0xff;
+            const w = new Uint32Array(64);
+            for (i = 0; i < paddedLength;) {
+              for (j = 0; j < 16; ++j) {
+                w[j] = padded[i] << 24 | padded[i + 1] << 16 | padded[i + 2] << 8 | padded[i + 3];
+                i += 4;
+              }
+              for (j = 16; j < 64; ++j) {
+                w[j] = littleSigmaPrime(w[j - 2]) + w[j - 7] + littleSigma(w[j - 15]) + w[j - 16] | 0;
+              }
+              let a = h0,
+                b = h1,
+                c = h2,
+                d = h3,
+                e = h4,
+                f = h5,
+                g = h6,
+                h = h7,
+                t1,
+                t2;
+              for (j = 0; j < 64; ++j) {
+                t1 = h + sigmaPrime(e) + ch(e, f, g) + k[j] + w[j];
+                t2 = sigma(a) + maj(a, b, c);
+                h = g;
+                g = f;
+                f = e;
+                e = d + t1 | 0;
+                d = c;
+                c = b;
+                b = a;
+                a = t1 + t2 | 0;
+              }
+              h0 = h0 + a | 0;
+              h1 = h1 + b | 0;
+              h2 = h2 + c | 0;
+              h3 = h3 + d | 0;
+              h4 = h4 + e | 0;
+              h5 = h5 + f | 0;
+              h6 = h6 + g | 0;
+              h7 = h7 + h | 0;
+            }
+            return new Uint8Array([h0 >> 24 & 0xFF, h0 >> 16 & 0xFF, h0 >> 8 & 0xFF, h0 & 0xFF, h1 >> 24 & 0xFF, h1 >> 16 & 0xFF, h1 >> 8 & 0xFF, h1 & 0xFF, h2 >> 24 & 0xFF, h2 >> 16 & 0xFF, h2 >> 8 & 0xFF, h2 & 0xFF, h3 >> 24 & 0xFF, h3 >> 16 & 0xFF, h3 >> 8 & 0xFF, h3 & 0xFF, h4 >> 24 & 0xFF, h4 >> 16 & 0xFF, h4 >> 8 & 0xFF, h4 & 0xFF, h5 >> 24 & 0xFF, h5 >> 16 & 0xFF, h5 >> 8 & 0xFF, h5 & 0xFF, h6 >> 24 & 0xFF, h6 >> 16 & 0xFF, h6 >> 8 & 0xFF, h6 & 0xFF, h7 >> 24 & 0xFF, h7 >> 16 & 0xFF, h7 >> 8 & 0xFF, h7 & 0xFF]);
+          }
+          return hash;
+        }();
+        exports.calculateSHA256 = calculateSHA256;
+        const calculateSHA512 = function calculateSHA512Closure() {
+          function ch(result, x, y, z, tmp) {
+            result.assign(x);
+            result.and(y);
+            tmp.assign(x);
+            tmp.not();
+            tmp.and(z);
+            result.xor(tmp);
+          }
+          function maj(result, x, y, z, tmp) {
+            result.assign(x);
+            result.and(y);
+            tmp.assign(x);
+            tmp.and(z);
+            result.xor(tmp);
+            tmp.assign(y);
+            tmp.and(z);
+            result.xor(tmp);
+          }
+          function sigma(result, x, tmp) {
+            result.assign(x);
+            result.rotateRight(28);
+            tmp.assign(x);
+            tmp.rotateRight(34);
+            result.xor(tmp);
+            tmp.assign(x);
+            tmp.rotateRight(39);
+            result.xor(tmp);
+          }
+          function sigmaPrime(result, x, tmp) {
+            result.assign(x);
+            result.rotateRight(14);
+            tmp.assign(x);
+            tmp.rotateRight(18);
+            result.xor(tmp);
+            tmp.assign(x);
+            tmp.rotateRight(41);
+            result.xor(tmp);
+          }
+          function littleSigma(result, x, tmp) {
+            result.assign(x);
+            result.rotateRight(1);
+            tmp.assign(x);
+            tmp.rotateRight(8);
+            result.xor(tmp);
+            tmp.assign(x);
+            tmp.shiftRight(7);
+            result.xor(tmp);
+          }
+          function littleSigmaPrime(result, x, tmp) {
+            result.assign(x);
+            result.rotateRight(19);
+            tmp.assign(x);
+            tmp.rotateRight(61);
+            result.xor(tmp);
+            tmp.assign(x);
+            tmp.shiftRight(6);
+            result.xor(tmp);
+          }
+          const k = [new Word64(0x428a2f98, 0xd728ae22), new Word64(0x71374491, 0x23ef65cd), new Word64(0xb5c0fbcf, 0xec4d3b2f), new Word64(0xe9b5dba5, 0x8189dbbc), new Word64(0x3956c25b, 0xf348b538), new Word64(0x59f111f1, 0xb605d019), new Word64(0x923f82a4, 0xaf194f9b), new Word64(0xab1c5ed5, 0xda6d8118), new Word64(0xd807aa98, 0xa3030242), new Word64(0x12835b01, 0x45706fbe), new Word64(0x243185be, 0x4ee4b28c), new Word64(0x550c7dc3, 0xd5ffb4e2), new Word64(0x72be5d74, 0xf27b896f), new Word64(0x80deb1fe, 0x3b1696b1), new Word64(0x9bdc06a7, 0x25c71235), new Word64(0xc19bf174, 0xcf692694), new Word64(0xe49b69c1, 0x9ef14ad2), new Word64(0xefbe4786, 0x384f25e3), new Word64(0x0fc19dc6, 0x8b8cd5b5), new Word64(0x240ca1cc, 0x77ac9c65), new Word64(0x2de92c6f, 0x592b0275), new Word64(0x4a7484aa, 0x6ea6e483), new Word64(0x5cb0a9dc, 0xbd41fbd4), new Word64(0x76f988da, 0x831153b5), new Word64(0x983e5152, 0xee66dfab), new Word64(0xa831c66d, 0x2db43210), new Word64(0xb00327c8, 0x98fb213f), new Word64(0xbf597fc7, 0xbeef0ee4), new Word64(0xc6e00bf3, 0x3da88fc2), new Word64(0xd5a79147, 0x930aa725), new Word64(0x06ca6351, 0xe003826f), new Word64(0x14292967, 0x0a0e6e70), new Word64(0x27b70a85, 0x46d22ffc), new Word64(0x2e1b2138, 0x5c26c926), new Word64(0x4d2c6dfc, 0x5ac42aed), new Word64(0x53380d13, 0x9d95b3df), new Word64(0x650a7354, 0x8baf63de), new Word64(0x766a0abb, 0x3c77b2a8), new Word64(0x81c2c92e, 0x47edaee6), new Word64(0x92722c85, 0x1482353b), new Word64(0xa2bfe8a1, 0x4cf10364), new Word64(0xa81a664b, 0xbc423001), new Word64(0xc24b8b70, 0xd0f89791), new Word64(0xc76c51a3, 0x0654be30), new Word64(0xd192e819, 0xd6ef5218), new Word64(0xd6990624, 0x5565a910), new Word64(0xf40e3585, 0x5771202a), new Word64(0x106aa070, 0x32bbd1b8), new Word64(0x19a4c116, 0xb8d2d0c8), new Word64(0x1e376c08, 0x5141ab53), new Word64(0x2748774c, 0xdf8eeb99), new Word64(0x34b0bcb5, 0xe19b48a8), new Word64(0x391c0cb3, 0xc5c95a63), new Word64(0x4ed8aa4a, 0xe3418acb), new Word64(0x5b9cca4f, 0x7763e373), new Word64(0x682e6ff3, 0xd6b2b8a3), new Word64(0x748f82ee, 0x5defb2fc), new Word64(0x78a5636f, 0x43172f60), new Word64(0x84c87814, 0xa1f0ab72), new Word64(0x8cc70208, 0x1a6439ec), new Word64(0x90befffa, 0x23631e28), new Word64(0xa4506ceb, 0xde82bde9), new Word64(0xbef9a3f7, 0xb2c67915), new Word64(0xc67178f2, 0xe372532b), new Word64(0xca273ece, 0xea26619c), new Word64(0xd186b8c7, 0x21c0c207), new Word64(0xeada7dd6, 0xcde0eb1e), new Word64(0xf57d4f7f, 0xee6ed178), new Word64(0x06f067aa, 0x72176fba), new Word64(0x0a637dc5, 0xa2c898a6), new Word64(0x113f9804, 0xbef90dae), new Word64(0x1b710b35, 0x131c471b), new Word64(0x28db77f5, 0x23047d84), new Word64(0x32caab7b, 0x40c72493), new Word64(0x3c9ebe0a, 0x15c9bebc), new Word64(0x431d67c4, 0x9c100d4c), new Word64(0x4cc5d4be, 0xcb3e42b6), new Word64(0x597f299c, 0xfc657e2a), new Word64(0x5fcb6fab, 0x3ad6faec), new Word64(0x6c44198c, 0x4a475817)];
+          function hash(data, offset, length, mode384 = false) {
+            let h0, h1, h2, h3, h4, h5, h6, h7;
+            if (!mode384) {
+              h0 = new Word64(0x6a09e667, 0xf3bcc908);
+              h1 = new Word64(0xbb67ae85, 0x84caa73b);
+              h2 = new Word64(0x3c6ef372, 0xfe94f82b);
+              h3 = new Word64(0xa54ff53a, 0x5f1d36f1);
+              h4 = new Word64(0x510e527f, 0xade682d1);
+              h5 = new Word64(0x9b05688c, 0x2b3e6c1f);
+              h6 = new Word64(0x1f83d9ab, 0xfb41bd6b);
+              h7 = new Word64(0x5be0cd19, 0x137e2179);
+            } else {
+              h0 = new Word64(0xcbbb9d5d, 0xc1059ed8);
+              h1 = new Word64(0x629a292a, 0x367cd507);
+              h2 = new Word64(0x9159015a, 0x3070dd17);
+              h3 = new Word64(0x152fecd8, 0xf70e5939);
+              h4 = new Word64(0x67332667, 0xffc00b31);
+              h5 = new Word64(0x8eb44a87, 0x68581511);
+              h6 = new Word64(0xdb0c2e0d, 0x64f98fa7);
+              h7 = new Word64(0x47b5481d, 0xbefa4fa4);
+            }
+            const paddedLength = Math.ceil((length + 17) / 128) * 128;
+            const padded = new Uint8Array(paddedLength);
+            let i, j;
+            for (i = 0; i < length; ++i) {
+              padded[i] = data[offset++];
+            }
+            padded[i++] = 0x80;
+            const n = paddedLength - 16;
+            while (i < n) {
+              padded[i++] = 0;
+            }
+            padded[i++] = 0;
+            padded[i++] = 0;
+            padded[i++] = 0;
+            padded[i++] = 0;
+            padded[i++] = 0;
+            padded[i++] = 0;
+            padded[i++] = 0;
+            padded[i++] = 0;
+            padded[i++] = 0;
+            padded[i++] = 0;
+            padded[i++] = 0;
+            padded[i++] = length >>> 29 & 0xff;
+            padded[i++] = length >> 21 & 0xff;
+            padded[i++] = length >> 13 & 0xff;
+            padded[i++] = length >> 5 & 0xff;
+            padded[i++] = length << 3 & 0xff;
+            const w = new Array(80);
+            for (i = 0; i < 80; i++) {
+              w[i] = new Word64(0, 0);
+            }
+            let a = new Word64(0, 0),
+              b = new Word64(0, 0),
+              c = new Word64(0, 0);
+            let d = new Word64(0, 0),
+              e = new Word64(0, 0),
+              f = new Word64(0, 0);
+            let g = new Word64(0, 0),
+              h = new Word64(0, 0);
+            const t1 = new Word64(0, 0),
+              t2 = new Word64(0, 0);
+            const tmp1 = new Word64(0, 0),
+              tmp2 = new Word64(0, 0);
+            let tmp3;
+            for (i = 0; i < paddedLength;) {
+              for (j = 0; j < 16; ++j) {
+                w[j].high = padded[i] << 24 | padded[i + 1] << 16 | padded[i + 2] << 8 | padded[i + 3];
+                w[j].low = padded[i + 4] << 24 | padded[i + 5] << 16 | padded[i + 6] << 8 | padded[i + 7];
+                i += 8;
+              }
+              for (j = 16; j < 80; ++j) {
+                tmp3 = w[j];
+                littleSigmaPrime(tmp3, w[j - 2], tmp2);
+                tmp3.add(w[j - 7]);
+                littleSigma(tmp1, w[j - 15], tmp2);
+                tmp3.add(tmp1);
+                tmp3.add(w[j - 16]);
+              }
+              a.assign(h0);
+              b.assign(h1);
+              c.assign(h2);
+              d.assign(h3);
+              e.assign(h4);
+              f.assign(h5);
+              g.assign(h6);
+              h.assign(h7);
+              for (j = 0; j < 80; ++j) {
+                t1.assign(h);
+                sigmaPrime(tmp1, e, tmp2);
+                t1.add(tmp1);
+                ch(tmp1, e, f, g, tmp2);
+                t1.add(tmp1);
+                t1.add(k[j]);
+                t1.add(w[j]);
+                sigma(t2, a, tmp2);
+                maj(tmp1, a, b, c, tmp2);
+                t2.add(tmp1);
+                tmp3 = h;
+                h = g;
+                g = f;
+                f = e;
+                d.add(t1);
+                e = d;
+                d = c;
+                c = b;
+                b = a;
+                tmp3.assign(t1);
+                tmp3.add(t2);
+                a = tmp3;
+              }
+              h0.add(a);
+              h1.add(b);
+              h2.add(c);
+              h3.add(d);
+              h4.add(e);
+              h5.add(f);
+              h6.add(g);
+              h7.add(h);
+            }
+            let result;
+            if (!mode384) {
+              result = new Uint8Array(64);
+              h0.copyTo(result, 0);
+              h1.copyTo(result, 8);
+              h2.copyTo(result, 16);
+              h3.copyTo(result, 24);
+              h4.copyTo(result, 32);
+              h5.copyTo(result, 40);
+              h6.copyTo(result, 48);
+              h7.copyTo(result, 56);
+            } else {
+              result = new Uint8Array(48);
+              h0.copyTo(result, 0);
+              h1.copyTo(result, 8);
+              h2.copyTo(result, 16);
+              h3.copyTo(result, 24);
+              h4.copyTo(result, 32);
+              h5.copyTo(result, 40);
+            }
+            return result;
+          }
+          return hash;
+        }();
+        exports.calculateSHA512 = calculateSHA512;
+        function calculateSHA384(data, offset, length) {
+          return calculateSHA512(data, offset, length, true);
+        }
+        class NullCipher {
+          decryptBlock(data) {
+            return data;
+          }
+          encrypt(data) {
+            return data;
+          }
+        }
+        class AESBaseCipher {
+          constructor() {
+            if (this.constructor === AESBaseCipher) {
+              (0, _util.unreachable)("Cannot initialize AESBaseCipher.");
+            }
+            this._s = new Uint8Array([0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76, 0xca, 0x82, 0xc9, 0x7d, 0xfa, 0x59, 0x47, 0xf0, 0xad, 0xd4, 0xa2, 0xaf, 0x9c, 0xa4, 0x72, 0xc0, 0xb7, 0xfd, 0x93, 0x26, 0x36, 0x3f, 0xf7, 0xcc, 0x34, 0xa5, 0xe5, 0xf1, 0x71, 0xd8, 0x31, 0x15, 0x04, 0xc7, 0x23, 0xc3, 0x18, 0x96, 0x05, 0x9a, 0x07, 0x12, 0x80, 0xe2, 0xeb, 0x27, 0xb2, 0x75, 0x09, 0x83, 0x2c, 0x1a, 0x1b, 0x6e, 0x5a, 0xa0, 0x52, 0x3b, 0xd6, 0xb3, 0x29, 0xe3, 0x2f, 0x84, 0x53, 0xd1, 0x00, 0xed, 0x20, 0xfc, 0xb1, 0x5b, 0x6a, 0xcb, 0xbe, 0x39, 0x4a, 0x4c, 0x58, 0xcf, 0xd0, 0xef, 0xaa, 0xfb, 0x43, 0x4d, 0x33, 0x85, 0x45, 0xf9, 0x02, 0x7f, 0x50, 0x3c, 0x9f, 0xa8, 0x51, 0xa3, 0x40, 0x8f, 0x92, 0x9d, 0x38, 0xf5, 0xbc, 0xb6, 0xda, 0x21, 0x10, 0xff, 0xf3, 0xd2, 0xcd, 0x0c, 0x13, 0xec, 0x5f, 0x97, 0x44, 0x17, 0xc4, 0xa7, 0x7e, 0x3d, 0x64, 0x5d, 0x19, 0x73, 0x60, 0x81, 0x4f, 0xdc, 0x22, 0x2a, 0x90, 0x88, 0x46, 0xee, 0xb8, 0x14, 0xde, 0x5e, 0x0b, 0xdb, 0xe0, 0x32, 0x3a, 0x0a, 0x49, 0x06, 0x24, 0x5c, 0xc2, 0xd3, 0xac, 0x62, 0x91, 0x95, 0xe4, 0x79, 0xe7, 0xc8, 0x37, 0x6d, 0x8d, 0xd5, 0x4e, 0xa9, 0x6c, 0x56, 0xf4, 0xea, 0x65, 0x7a, 0xae, 0x08, 0xba, 0x78, 0x25, 0x2e, 0x1c, 0xa6, 0xb4, 0xc6, 0xe8, 0xdd, 0x74, 0x1f, 0x4b, 0xbd, 0x8b, 0x8a, 0x70, 0x3e, 0xb5, 0x66, 0x48, 0x03, 0xf6, 0x0e, 0x61, 0x35, 0x57, 0xb9, 0x86, 0xc1, 0x1d, 0x9e, 0xe1, 0xf8, 0x98, 0x11, 0x69, 0xd9, 0x8e, 0x94, 0x9b, 0x1e, 0x87, 0xe9, 0xce, 0x55, 0x28, 0xdf, 0x8c, 0xa1, 0x89, 0x0d, 0xbf, 0xe6, 0x42, 0x68, 0x41, 0x99, 0x2d, 0x0f, 0xb0, 0x54, 0xbb, 0x16]);
+            this._inv_s = new Uint8Array([0x52, 0x09, 0x6a, 0xd5, 0x30, 0x36, 0xa5, 0x38, 0xbf, 0x40, 0xa3, 0x9e, 0x81, 0xf3, 0xd7, 0xfb, 0x7c, 0xe3, 0x39, 0x82, 0x9b, 0x2f, 0xff, 0x87, 0x34, 0x8e, 0x43, 0x44, 0xc4, 0xde, 0xe9, 0xcb, 0x54, 0x7b, 0x94, 0x32, 0xa6, 0xc2, 0x23, 0x3d, 0xee, 0x4c, 0x95, 0x0b, 0x42, 0xfa, 0xc3, 0x4e, 0x08, 0x2e, 0xa1, 0x66, 0x28, 0xd9, 0x24, 0xb2, 0x76, 0x5b, 0xa2, 0x49, 0x6d, 0x8b, 0xd1, 0x25, 0x72, 0xf8, 0xf6, 0x64, 0x86, 0x68, 0x98, 0x16, 0xd4, 0xa4, 0x5c, 0xcc, 0x5d, 0x65, 0xb6, 0x92, 0x6c, 0x70, 0x48, 0x50, 0xfd, 0xed, 0xb9, 0xda, 0x5e, 0x15, 0x46, 0x57, 0xa7, 0x8d, 0x9d, 0x84, 0x90, 0xd8, 0xab, 0x00, 0x8c, 0xbc, 0xd3, 0x0a, 0xf7, 0xe4, 0x58, 0x05, 0xb8, 0xb3, 0x45, 0x06, 0xd0, 0x2c, 0x1e, 0x8f, 0xca, 0x3f, 0x0f, 0x02, 0xc1, 0xaf, 0xbd, 0x03, 0x01, 0x13, 0x8a, 0x6b, 0x3a, 0x91, 0x11, 0x41, 0x4f, 0x67, 0xdc, 0xea, 0x97, 0xf2, 0xcf, 0xce, 0xf0, 0xb4, 0xe6, 0x73, 0x96, 0xac, 0x74, 0x22, 0xe7, 0xad, 0x35, 0x85, 0xe2, 0xf9, 0x37, 0xe8, 0x1c, 0x75, 0xdf, 0x6e, 0x47, 0xf1, 0x1a, 0x71, 0x1d, 0x29, 0xc5, 0x89, 0x6f, 0xb7, 0x62, 0x0e, 0xaa, 0x18, 0xbe, 0x1b, 0xfc, 0x56, 0x3e, 0x4b, 0xc6, 0xd2, 0x79, 0x20, 0x9a, 0xdb, 0xc0, 0xfe, 0x78, 0xcd, 0x5a, 0xf4, 0x1f, 0xdd, 0xa8, 0x33, 0x88, 0x07, 0xc7, 0x31, 0xb1, 0x12, 0x10, 0x59, 0x27, 0x80, 0xec, 0x5f, 0x60, 0x51, 0x7f, 0xa9, 0x19, 0xb5, 0x4a, 0x0d, 0x2d, 0xe5, 0x7a, 0x9f, 0x93, 0xc9, 0x9c, 0xef, 0xa0, 0xe0, 0x3b, 0x4d, 0xae, 0x2a, 0xf5, 0xb0, 0xc8, 0xeb, 0xbb, 0x3c, 0x83, 0x53, 0x99, 0x61, 0x17, 0x2b, 0x04, 0x7e, 0xba, 0x77, 0xd6, 0x26, 0xe1, 0x69, 0x14, 0x63, 0x55, 0x21, 0x0c, 0x7d]);
+            this._mix = new Uint32Array([0x00000000, 0x0e090d0b, 0x1c121a16, 0x121b171d, 0x3824342c, 0x362d3927, 0x24362e3a, 0x2a3f2331, 0x70486858, 0x7e416553, 0x6c5a724e, 0x62537f45, 0x486c5c74, 0x4665517f, 0x547e4662, 0x5a774b69, 0xe090d0b0, 0xee99ddbb, 0xfc82caa6, 0xf28bc7ad, 0xd8b4e49c, 0xd6bde997, 0xc4a6fe8a, 0xcaaff381, 0x90d8b8e8, 0x9ed1b5e3, 0x8ccaa2fe, 0x82c3aff5, 0xa8fc8cc4, 0xa6f581cf, 0xb4ee96d2, 0xbae79bd9, 0xdb3bbb7b, 0xd532b670, 0xc729a16d, 0xc920ac66, 0xe31f8f57, 0xed16825c, 0xff0d9541, 0xf104984a, 0xab73d323, 0xa57ade28, 0xb761c935, 0xb968c43e, 0x9357e70f, 0x9d5eea04, 0x8f45fd19, 0x814cf012, 0x3bab6bcb, 0x35a266c0, 0x27b971dd, 0x29b07cd6, 0x038f5fe7, 0x0d8652ec, 0x1f9d45f1, 0x119448fa, 0x4be30393, 0x45ea0e98, 0x57f11985, 0x59f8148e, 0x73c737bf, 0x7dce3ab4, 0x6fd52da9, 0x61dc20a2, 0xad766df6, 0xa37f60fd, 0xb16477e0, 0xbf6d7aeb, 0x955259da, 0x9b5b54d1, 0x894043cc, 0x87494ec7, 0xdd3e05ae, 0xd33708a5, 0xc12c1fb8, 0xcf2512b3, 0xe51a3182, 0xeb133c89, 0xf9082b94, 0xf701269f, 0x4de6bd46, 0x43efb04d, 0x51f4a750, 0x5ffdaa5b, 0x75c2896a, 0x7bcb8461, 0x69d0937c, 0x67d99e77, 0x3daed51e, 0x33a7d815, 0x21bccf08, 0x2fb5c203, 0x058ae132, 0x0b83ec39, 0x1998fb24, 0x1791f62f, 0x764dd68d, 0x7844db86, 0x6a5fcc9b, 0x6456c190, 0x4e69e2a1, 0x4060efaa, 0x527bf8b7, 0x5c72f5bc, 0x0605bed5, 0x080cb3de, 0x1a17a4c3, 0x141ea9c8, 0x3e218af9, 0x302887f2, 0x223390ef, 0x2c3a9de4, 0x96dd063d, 0x98d40b36, 0x8acf1c2b, 0x84c61120, 0xaef93211, 0xa0f03f1a, 0xb2eb2807, 0xbce2250c, 0xe6956e65, 0xe89c636e, 0xfa877473, 0xf48e7978, 0xdeb15a49, 0xd0b85742, 0xc2a3405f, 0xccaa4d54, 0x41ecdaf7, 0x4fe5d7fc, 0x5dfec0e1, 0x53f7cdea, 0x79c8eedb, 0x77c1e3d0, 0x65daf4cd, 0x6bd3f9c6, 0x31a4b2af, 0x3fadbfa4, 0x2db6a8b9, 0x23bfa5b2, 0x09808683, 0x07898b88, 0x15929c95, 0x1b9b919e, 0xa17c0a47, 0xaf75074c, 0xbd6e1051, 0xb3671d5a, 0x99583e6b, 0x97513360, 0x854a247d, 0x8b432976, 0xd134621f, 0xdf3d6f14, 0xcd267809, 0xc32f7502, 0xe9105633, 0xe7195b38, 0xf5024c25, 0xfb0b412e, 0x9ad7618c, 0x94de6c87, 0x86c57b9a, 0x88cc7691, 0xa2f355a0, 0xacfa58ab, 0xbee14fb6, 0xb0e842bd, 0xea9f09d4, 0xe49604df, 0xf68d13c2, 0xf8841ec9, 0xd2bb3df8, 0xdcb230f3, 0xcea927ee, 0xc0a02ae5, 0x7a47b13c, 0x744ebc37, 0x6655ab2a, 0x685ca621, 0x42638510, 0x4c6a881b, 0x5e719f06, 0x5078920d, 0x0a0fd964, 0x0406d46f, 0x161dc372, 0x1814ce79, 0x322bed48, 0x3c22e043, 0x2e39f75e, 0x2030fa55, 0xec9ab701, 0xe293ba0a, 0xf088ad17, 0xfe81a01c, 0xd4be832d, 0xdab78e26, 0xc8ac993b, 0xc6a59430, 0x9cd2df59, 0x92dbd252, 0x80c0c54f, 0x8ec9c844, 0xa4f6eb75, 0xaaffe67e, 0xb8e4f163, 0xb6edfc68, 0x0c0a67b1, 0x02036aba, 0x10187da7, 0x1e1170ac, 0x342e539d, 0x3a275e96, 0x283c498b, 0x26354480, 0x7c420fe9, 0x724b02e2, 0x605015ff, 0x6e5918f4, 0x44663bc5, 0x4a6f36ce, 0x587421d3, 0x567d2cd8, 0x37a10c7a, 0x39a80171, 0x2bb3166c, 0x25ba1b67, 0x0f853856, 0x018c355d, 0x13972240, 0x1d9e2f4b, 0x47e96422, 0x49e06929, 0x5bfb7e34, 0x55f2733f, 0x7fcd500e, 0x71c45d05, 0x63df4a18, 0x6dd64713, 0xd731dcca, 0xd938d1c1, 0xcb23c6dc, 0xc52acbd7, 0xef15e8e6, 0xe11ce5ed, 0xf307f2f0, 0xfd0efffb, 0xa779b492, 0xa970b999, 0xbb6bae84, 0xb562a38f, 0x9f5d80be, 0x91548db5, 0x834f9aa8, 0x8d4697a3]);
+            this._mixCol = new Uint8Array(256);
+            for (let i = 0; i < 256; i++) {
+              this._mixCol[i] = i < 128 ? i << 1 : i << 1 ^ 0x1b;
+            }
+            this.buffer = new Uint8Array(16);
+            this.bufferPosition = 0;
+          }
+          _expandKey(cipherKey) {
+            (0, _util.unreachable)("Cannot call `_expandKey` on the base class");
+          }
+          _decrypt(input, key) {
+            let t, u, v;
+            const state = new Uint8Array(16);
+            state.set(input);
+            for (let j = 0, k = this._keySize; j < 16; ++j, ++k) {
+              state[j] ^= key[k];
+            }
+            for (let i = this._cyclesOfRepetition - 1; i >= 1; --i) {
+              t = state[13];
+              state[13] = state[9];
+              state[9] = state[5];
+              state[5] = state[1];
+              state[1] = t;
+              t = state[14];
+              u = state[10];
+              state[14] = state[6];
+              state[10] = state[2];
+              state[6] = t;
+              state[2] = u;
+              t = state[15];
+              u = state[11];
+              v = state[7];
+              state[15] = state[3];
+              state[11] = t;
+              state[7] = u;
+              state[3] = v;
+              for (let j = 0; j < 16; ++j) {
+                state[j] = this._inv_s[state[j]];
+              }
+              for (let j = 0, k = i * 16; j < 16; ++j, ++k) {
+                state[j] ^= key[k];
+              }
+              for (let j = 0; j < 16; j += 4) {
+                const s0 = this._mix[state[j]];
+                const s1 = this._mix[state[j + 1]];
+                const s2 = this._mix[state[j + 2]];
+                const s3 = this._mix[state[j + 3]];
+                t = s0 ^ s1 >>> 8 ^ s1 << 24 ^ s2 >>> 16 ^ s2 << 16 ^ s3 >>> 24 ^ s3 << 8;
+                state[j] = t >>> 24 & 0xff;
+                state[j + 1] = t >> 16 & 0xff;
+                state[j + 2] = t >> 8 & 0xff;
+                state[j + 3] = t & 0xff;
+              }
+            }
+            t = state[13];
+            state[13] = state[9];
+            state[9] = state[5];
+            state[5] = state[1];
+            state[1] = t;
+            t = state[14];
+            u = state[10];
+            state[14] = state[6];
+            state[10] = state[2];
+            state[6] = t;
+            state[2] = u;
+            t = state[15];
+            u = state[11];
+            v = state[7];
+            state[15] = state[3];
+            state[11] = t;
+            state[7] = u;
+            state[3] = v;
+            for (let j = 0; j < 16; ++j) {
+              state[j] = this._inv_s[state[j]];
+              state[j] ^= key[j];
+            }
+            return state;
+          }
+          _encrypt(input, key) {
+            const s = this._s;
+            let t, u, v;
+            const state = new Uint8Array(16);
+            state.set(input);
+            for (let j = 0; j < 16; ++j) {
+              state[j] ^= key[j];
+            }
+            for (let i = 1; i < this._cyclesOfRepetition; i++) {
+              for (let j = 0; j < 16; ++j) {
+                state[j] = s[state[j]];
+              }
+              v = state[1];
+              state[1] = state[5];
+              state[5] = state[9];
+              state[9] = state[13];
+              state[13] = v;
+              v = state[2];
+              u = state[6];
+              state[2] = state[10];
+              state[6] = state[14];
+              state[10] = v;
+              state[14] = u;
+              v = state[3];
+              u = state[7];
+              t = state[11];
+              state[3] = state[15];
+              state[7] = v;
+              state[11] = u;
+              state[15] = t;
+              for (let j = 0; j < 16; j += 4) {
+                const s0 = state[j + 0];
+                const s1 = state[j + 1];
+                const s2 = state[j + 2];
+                const s3 = state[j + 3];
+                t = s0 ^ s1 ^ s2 ^ s3;
+                state[j + 0] ^= t ^ this._mixCol[s0 ^ s1];
+                state[j + 1] ^= t ^ this._mixCol[s1 ^ s2];
+                state[j + 2] ^= t ^ this._mixCol[s2 ^ s3];
+                state[j + 3] ^= t ^ this._mixCol[s3 ^ s0];
+              }
+              for (let j = 0, k = i * 16; j < 16; ++j, ++k) {
+                state[j] ^= key[k];
+              }
+            }
+            for (let j = 0; j < 16; ++j) {
+              state[j] = s[state[j]];
+            }
+            v = state[1];
+            state[1] = state[5];
+            state[5] = state[9];
+            state[9] = state[13];
+            state[13] = v;
+            v = state[2];
+            u = state[6];
+            state[2] = state[10];
+            state[6] = state[14];
+            state[10] = v;
+            state[14] = u;
+            v = state[3];
+            u = state[7];
+            t = state[11];
+            state[3] = state[15];
+            state[7] = v;
+            state[11] = u;
+            state[15] = t;
+            for (let j = 0, k = this._keySize; j < 16; ++j, ++k) {
+              state[j] ^= key[k];
+            }
+            return state;
+          }
+          _decryptBlock2(data, finalize) {
+            const sourceLength = data.length;
+            let buffer = this.buffer,
+              bufferLength = this.bufferPosition;
+            const result = [];
+            let iv = this.iv;
+            for (let i = 0; i < sourceLength; ++i) {
+              buffer[bufferLength] = data[i];
+              ++bufferLength;
+              if (bufferLength < 16) {
+                continue;
+              }
+              const plain = this._decrypt(buffer, this._key);
+              for (let j = 0; j < 16; ++j) {
+                plain[j] ^= iv[j];
+              }
+              iv = buffer;
+              result.push(plain);
+              buffer = new Uint8Array(16);
+              bufferLength = 0;
+            }
+            this.buffer = buffer;
+            this.bufferLength = bufferLength;
+            this.iv = iv;
+            if (result.length === 0) {
+              return new Uint8Array(0);
+            }
+            let outputLength = 16 * result.length;
+            if (finalize) {
+              const lastBlock = result.at(-1);
+              let psLen = lastBlock[15];
+              if (psLen <= 16) {
+                for (let i = 15, ii = 16 - psLen; i >= ii; --i) {
+                  if (lastBlock[i] !== psLen) {
+                    psLen = 0;
+                    break;
+                  }
+                }
+                outputLength -= psLen;
+                result[result.length - 1] = lastBlock.subarray(0, 16 - psLen);
+              }
+            }
+            const output = new Uint8Array(outputLength);
+            for (let i = 0, j = 0, ii = result.length; i < ii; ++i, j += 16) {
+              output.set(result[i], j);
+            }
+            return output;
+          }
+          decryptBlock(data, finalize, iv = null) {
+            const sourceLength = data.length;
+            const buffer = this.buffer;
+            let bufferLength = this.bufferPosition;
+            if (iv) {
+              this.iv = iv;
+            } else {
+              for (let i = 0; bufferLength < 16 && i < sourceLength; ++i, ++bufferLength) {
+                buffer[bufferLength] = data[i];
+              }
+              if (bufferLength < 16) {
+                this.bufferLength = bufferLength;
+                return new Uint8Array(0);
+              }
+              this.iv = buffer;
+              data = data.subarray(16);
+            }
+            this.buffer = new Uint8Array(16);
+            this.bufferLength = 0;
+            this.decryptBlock = this._decryptBlock2;
+            return this.decryptBlock(data, finalize);
+          }
+          encrypt(data, iv) {
+            const sourceLength = data.length;
+            let buffer = this.buffer,
+              bufferLength = this.bufferPosition;
+            const result = [];
+            if (!iv) {
+              iv = new Uint8Array(16);
+            }
+            for (let i = 0; i < sourceLength; ++i) {
+              buffer[bufferLength] = data[i];
+              ++bufferLength;
+              if (bufferLength < 16) {
+                continue;
+              }
+              for (let j = 0; j < 16; ++j) {
+                buffer[j] ^= iv[j];
+              }
+              const cipher = this._encrypt(buffer, this._key);
+              iv = cipher;
+              result.push(cipher);
+              buffer = new Uint8Array(16);
+              bufferLength = 0;
+            }
+            this.buffer = buffer;
+            this.bufferLength = bufferLength;
+            this.iv = iv;
+            if (result.length === 0) {
+              return new Uint8Array(0);
+            }
+            const outputLength = 16 * result.length;
+            const output = new Uint8Array(outputLength);
+            for (let i = 0, j = 0, ii = result.length; i < ii; ++i, j += 16) {
+              output.set(result[i], j);
+            }
+            return output;
+          }
+        }
+        class AES128Cipher extends AESBaseCipher {
+          constructor(key) {
+            super();
+            this._cyclesOfRepetition = 10;
+            this._keySize = 160;
+            this._rcon = new Uint8Array([0x8d, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36, 0x6c, 0xd8, 0xab, 0x4d, 0x9a, 0x2f, 0x5e, 0xbc, 0x63, 0xc6, 0x97, 0x35, 0x6a, 0xd4, 0xb3, 0x7d, 0xfa, 0xef, 0xc5, 0x91, 0x39, 0x72, 0xe4, 0xd3, 0xbd, 0x61, 0xc2, 0x9f, 0x25, 0x4a, 0x94, 0x33, 0x66, 0xcc, 0x83, 0x1d, 0x3a, 0x74, 0xe8, 0xcb, 0x8d, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36, 0x6c, 0xd8, 0xab, 0x4d, 0x9a, 0x2f, 0x5e, 0xbc, 0x63, 0xc6, 0x97, 0x35, 0x6a, 0xd4, 0xb3, 0x7d, 0xfa, 0xef, 0xc5, 0x91, 0x39, 0x72, 0xe4, 0xd3, 0xbd, 0x61, 0xc2, 0x9f, 0x25, 0x4a, 0x94, 0x33, 0x66, 0xcc, 0x83, 0x1d, 0x3a, 0x74, 0xe8, 0xcb, 0x8d, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36, 0x6c, 0xd8, 0xab, 0x4d, 0x9a, 0x2f, 0x5e, 0xbc, 0x63, 0xc6, 0x97, 0x35, 0x6a, 0xd4, 0xb3, 0x7d, 0xfa, 0xef, 0xc5, 0x91, 0x39, 0x72, 0xe4, 0xd3, 0xbd, 0x61, 0xc2, 0x9f, 0x25, 0x4a, 0x94, 0x33, 0x66, 0xcc, 0x83, 0x1d, 0x3a, 0x74, 0xe8, 0xcb, 0x8d, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36, 0x6c, 0xd8, 0xab, 0x4d, 0x9a, 0x2f, 0x5e, 0xbc, 0x63, 0xc6, 0x97, 0x35, 0x6a, 0xd4, 0xb3, 0x7d, 0xfa, 0xef, 0xc5, 0x91, 0x39, 0x72, 0xe4, 0xd3, 0xbd, 0x61, 0xc2, 0x9f, 0x25, 0x4a, 0x94, 0x33, 0x66, 0xcc, 0x83, 0x1d, 0x3a, 0x74, 0xe8, 0xcb, 0x8d, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36, 0x6c, 0xd8, 0xab, 0x4d, 0x9a, 0x2f, 0x5e, 0xbc, 0x63, 0xc6, 0x97, 0x35, 0x6a, 0xd4, 0xb3, 0x7d, 0xfa, 0xef, 0xc5, 0x91, 0x39, 0x72, 0xe4, 0xd3, 0xbd, 0x61, 0xc2, 0x9f, 0x25, 0x4a, 0x94, 0x33, 0x66, 0xcc, 0x83, 0x1d, 0x3a, 0x74, 0xe8, 0xcb, 0x8d]);
+            this._key = this._expandKey(key);
+          }
+          _expandKey(cipherKey) {
+            const b = 176;
+            const s = this._s;
+            const rcon = this._rcon;
+            const result = new Uint8Array(b);
+            result.set(cipherKey);
+            for (let j = 16, i = 1; j < b; ++i) {
+              let t1 = result[j - 3];
+              let t2 = result[j - 2];
+              let t3 = result[j - 1];
+              let t4 = result[j - 4];
+              t1 = s[t1];
+              t2 = s[t2];
+              t3 = s[t3];
+              t4 = s[t4];
+              t1 ^= rcon[i];
+              for (let n = 0; n < 4; ++n) {
+                result[j] = t1 ^= result[j - 16];
+                j++;
+                result[j] = t2 ^= result[j - 16];
+                j++;
+                result[j] = t3 ^= result[j - 16];
+                j++;
+                result[j] = t4 ^= result[j - 16];
+                j++;
+              }
+            }
+            return result;
+          }
+        }
+        exports.AES128Cipher = AES128Cipher;
+        class AES256Cipher extends AESBaseCipher {
+          constructor(key) {
+            super();
+            this._cyclesOfRepetition = 14;
+            this._keySize = 224;
+            this._key = this._expandKey(key);
+          }
+          _expandKey(cipherKey) {
+            const b = 240;
+            const s = this._s;
+            const result = new Uint8Array(b);
+            result.set(cipherKey);
+            let r = 1;
+            let t1, t2, t3, t4;
+            for (let j = 32, i = 1; j < b; ++i) {
+              if (j % 32 === 16) {
+                t1 = s[t1];
+                t2 = s[t2];
+                t3 = s[t3];
+                t4 = s[t4];
+              } else if (j % 32 === 0) {
+                t1 = result[j - 3];
+                t2 = result[j - 2];
+                t3 = result[j - 1];
+                t4 = result[j - 4];
+                t1 = s[t1];
+                t2 = s[t2];
+                t3 = s[t3];
+                t4 = s[t4];
+                t1 ^= r;
+                if ((r <<= 1) >= 256) {
+                  r = (r ^ 0x1b) & 0xff;
+                }
+              }
+              for (let n = 0; n < 4; ++n) {
+                result[j] = t1 ^= result[j - 32];
+                j++;
+                result[j] = t2 ^= result[j - 32];
+                j++;
+                result[j] = t3 ^= result[j - 32];
+                j++;
+                result[j] = t4 ^= result[j - 32];
+                j++;
+              }
+            }
+            return result;
+          }
+        }
+        exports.AES256Cipher = AES256Cipher;
+        class PDF17 {
+          checkOwnerPassword(password, ownerValidationSalt, userBytes, ownerPassword) {
+            const hashData = new Uint8Array(password.length + 56);
+            hashData.set(password, 0);
+            hashData.set(ownerValidationSalt, password.length);
+            hashData.set(userBytes, password.length + ownerValidationSalt.length);
+            const result = calculateSHA256(hashData, 0, hashData.length);
+            return (0, _util.isArrayEqual)(result, ownerPassword);
+          }
+          checkUserPassword(password, userValidationSalt, userPassword) {
+            const hashData = new Uint8Array(password.length + 8);
+            hashData.set(password, 0);
+            hashData.set(userValidationSalt, password.length);
+            const result = calculateSHA256(hashData, 0, hashData.length);
+            return (0, _util.isArrayEqual)(result, userPassword);
+          }
+          getOwnerKey(password, ownerKeySalt, userBytes, ownerEncryption) {
+            const hashData = new Uint8Array(password.length + 56);
+            hashData.set(password, 0);
+            hashData.set(ownerKeySalt, password.length);
+            hashData.set(userBytes, password.length + ownerKeySalt.length);
+            const key = calculateSHA256(hashData, 0, hashData.length);
+            const cipher = new AES256Cipher(key);
+            return cipher.decryptBlock(ownerEncryption, false, new Uint8Array(16));
+          }
+          getUserKey(password, userKeySalt, userEncryption) {
+            const hashData = new Uint8Array(password.length + 8);
+            hashData.set(password, 0);
+            hashData.set(userKeySalt, password.length);
+            const key = calculateSHA256(hashData, 0, hashData.length);
+            const cipher = new AES256Cipher(key);
+            return cipher.decryptBlock(userEncryption, false, new Uint8Array(16));
+          }
+        }
+        exports.PDF17 = PDF17;
+        class PDF20 {
+          _hash(password, input, userBytes) {
+            let k = calculateSHA256(input, 0, input.length).subarray(0, 32);
+            let e = [0];
+            let i = 0;
+            while (i < 64 || e.at(-1) > i - 32) {
+              const combinedLength = password.length + k.length + userBytes.length,
+                combinedArray = new Uint8Array(combinedLength);
+              let writeOffset = 0;
+              combinedArray.set(password, writeOffset);
+              writeOffset += password.length;
+              combinedArray.set(k, writeOffset);
+              writeOffset += k.length;
+              combinedArray.set(userBytes, writeOffset);
+              const k1 = new Uint8Array(combinedLength * 64);
+              for (let j = 0, pos = 0; j < 64; j++, pos += combinedLength) {
+                k1.set(combinedArray, pos);
+              }
+              const cipher = new AES128Cipher(k.subarray(0, 16));
+              e = cipher.encrypt(k1, k.subarray(16, 32));
+              const remainder = e.slice(0, 16).reduce((a, b) => a + b, 0) % 3;
+              if (remainder === 0) {
+                k = calculateSHA256(e, 0, e.length);
+              } else if (remainder === 1) {
+                k = calculateSHA384(e, 0, e.length);
+              } else if (remainder === 2) {
+                k = calculateSHA512(e, 0, e.length);
+              }
+              i++;
+            }
+            return k.subarray(0, 32);
+          }
+          checkOwnerPassword(password, ownerValidationSalt, userBytes, ownerPassword) {
+            const hashData = new Uint8Array(password.length + 56);
+            hashData.set(password, 0);
+            hashData.set(ownerValidationSalt, password.length);
+            hashData.set(userBytes, password.length + ownerValidationSalt.length);
+            const result = this._hash(password, hashData, userBytes);
+            return (0, _util.isArrayEqual)(result, ownerPassword);
+          }
+          checkUserPassword(password, userValidationSalt, userPassword) {
+            const hashData = new Uint8Array(password.length + 8);
+            hashData.set(password, 0);
+            hashData.set(userValidationSalt, password.length);
+            const result = this._hash(password, hashData, []);
+            return (0, _util.isArrayEqual)(result, userPassword);
+          }
+          getOwnerKey(password, ownerKeySalt, userBytes, ownerEncryption) {
+            const hashData = new Uint8Array(password.length + 56);
+            hashData.set(password, 0);
+            hashData.set(ownerKeySalt, password.length);
+            hashData.set(userBytes, password.length + ownerKeySalt.length);
+            const key = this._hash(password, hashData, userBytes);
+            const cipher = new AES256Cipher(key);
+            return cipher.decryptBlock(ownerEncryption, false, new Uint8Array(16));
+          }
+          getUserKey(password, userKeySalt, userEncryption) {
+            const hashData = new Uint8Array(password.length + 8);
+            hashData.set(password, 0);
+            hashData.set(userKeySalt, password.length);
+            const key = this._hash(password, hashData, []);
+            const cipher = new AES256Cipher(key);
+            return cipher.decryptBlock(userEncryption, false, new Uint8Array(16));
+          }
+        }
+        exports.PDF20 = PDF20;
+        class CipherTransform {
+          constructor(stringCipherConstructor, streamCipherConstructor) {
+            this.StringCipherConstructor = stringCipherConstructor;
+            this.StreamCipherConstructor = streamCipherConstructor;
+          }
+          createStream(stream, length) {
+            const cipher = new this.StreamCipherConstructor();
+            return new _decrypt_stream.DecryptStream(stream, length, function cipherTransformDecryptStream(data, finalize) {
+              return cipher.decryptBlock(data, finalize);
+            });
+          }
+          decryptString(s) {
+            const cipher = new this.StringCipherConstructor();
+            let data = (0, _util.stringToBytes)(s);
+            data = cipher.decryptBlock(data, true);
+            return (0, _util.bytesToString)(data);
+          }
+          encryptString(s) {
+            const cipher = new this.StringCipherConstructor();
+            if (cipher instanceof AESBaseCipher) {
+              const strLen = s.length;
+              const pad = 16 - strLen % 16;
+              s += String.fromCharCode(pad).repeat(pad);
+              const iv = new Uint8Array(16);
+              if (typeof crypto !== "undefined") {
+                crypto.getRandomValues(iv);
+              } else {
+                for (let i = 0; i < 16; i++) {
+                  iv[i] = Math.floor(256 * Math.random());
+                }
+              }
+              let data = (0, _util.stringToBytes)(s);
+              data = cipher.encrypt(data, iv);
+              const buf = new Uint8Array(16 + data.length);
+              buf.set(iv);
+              buf.set(data, 16);
+              return (0, _util.bytesToString)(buf);
+            }
+            let data = (0, _util.stringToBytes)(s);
+            data = cipher.encrypt(data);
+            return (0, _util.bytesToString)(data);
+          }
+        }
+        class CipherTransformFactory {
+          static #defaultPasswordBytes = new Uint8Array([0x28, 0xbf, 0x4e, 0x5e, 0x4e, 0x75, 0x8a, 0x41, 0x64, 0x00, 0x4e, 0x56, 0xff, 0xfa, 0x01, 0x08, 0x2e, 0x2e, 0x00, 0xb6, 0xd0, 0x68, 0x3e, 0x80, 0x2f, 0x0c, 0xa9, 0xfe, 0x64, 0x53, 0x69, 0x7a]);
+          #createEncryptionKey20(revision, password, ownerPassword, ownerValidationSalt, ownerKeySalt, uBytes, userPassword, userValidationSalt, userKeySalt, ownerEncryption, userEncryption, perms) {
+            if (password) {
+              const passwordLength = Math.min(127, password.length);
+              password = password.subarray(0, passwordLength);
+            } else {
+              password = [];
+            }
+            const pdfAlgorithm = revision === 6 ? new PDF20() : new PDF17();
+            if (pdfAlgorithm.checkUserPassword(password, userValidationSalt, userPassword)) {
+              return pdfAlgorithm.getUserKey(password, userKeySalt, userEncryption);
+            } else if (password.length && pdfAlgorithm.checkOwnerPassword(password, ownerValidationSalt, uBytes, ownerPassword)) {
+              return pdfAlgorithm.getOwnerKey(password, ownerKeySalt, uBytes, ownerEncryption);
+            }
+            return null;
+          }
+          #prepareKeyData(fileId, password, ownerPassword, userPassword, flags, revision, keyLength, encryptMetadata) {
+            const hashDataSize = 40 + ownerPassword.length + fileId.length;
+            const hashData = new Uint8Array(hashDataSize);
+            let i = 0,
+              j,
+              n;
+            if (password) {
+              n = Math.min(32, password.length);
+              for (; i < n; ++i) {
+                hashData[i] = password[i];
+              }
+            }
+            j = 0;
+            while (i < 32) {
+              hashData[i++] = CipherTransformFactory.#defaultPasswordBytes[j++];
+            }
+            for (j = 0, n = ownerPassword.length; j < n; ++j) {
+              hashData[i++] = ownerPassword[j];
+            }
+            hashData[i++] = flags & 0xff;
+            hashData[i++] = flags >> 8 & 0xff;
+            hashData[i++] = flags >> 16 & 0xff;
+            hashData[i++] = flags >>> 24 & 0xff;
+            for (j = 0, n = fileId.length; j < n; ++j) {
+              hashData[i++] = fileId[j];
+            }
+            if (revision >= 4 && !encryptMetadata) {
+              hashData[i++] = 0xff;
+              hashData[i++] = 0xff;
+              hashData[i++] = 0xff;
+              hashData[i++] = 0xff;
+            }
+            let hash = calculateMD5(hashData, 0, i);
+            const keyLengthInBytes = keyLength >> 3;
+            if (revision >= 3) {
+              for (j = 0; j < 50; ++j) {
+                hash = calculateMD5(hash, 0, keyLengthInBytes);
+              }
+            }
+            const encryptionKey = hash.subarray(0, keyLengthInBytes);
+            let cipher, checkData;
+            if (revision >= 3) {
+              for (i = 0; i < 32; ++i) {
+                hashData[i] = CipherTransformFactory.#defaultPasswordBytes[i];
+              }
+              for (j = 0, n = fileId.length; j < n; ++j) {
+                hashData[i++] = fileId[j];
+              }
+              cipher = new ARCFourCipher(encryptionKey);
+              checkData = cipher.encryptBlock(calculateMD5(hashData, 0, i));
+              n = encryptionKey.length;
+              const derivedKey = new Uint8Array(n);
+              for (j = 1; j <= 19; ++j) {
+                for (let k = 0; k < n; ++k) {
+                  derivedKey[k] = encryptionKey[k] ^ j;
+                }
+                cipher = new ARCFourCipher(derivedKey);
+                checkData = cipher.encryptBlock(checkData);
+              }
+              for (j = 0, n = checkData.length; j < n; ++j) {
+                if (userPassword[j] !== checkData[j]) {
+                  return null;
+                }
+              }
+            } else {
+              cipher = new ARCFourCipher(encryptionKey);
+              checkData = cipher.encryptBlock(CipherTransformFactory.#defaultPasswordBytes);
+              for (j = 0, n = checkData.length; j < n; ++j) {
+                if (userPassword[j] !== checkData[j]) {
+                  return null;
+                }
+              }
+            }
+            return encryptionKey;
+          }
+          #decodeUserPassword(password, ownerPassword, revision, keyLength) {
+            const hashData = new Uint8Array(32);
+            let i = 0;
+            const n = Math.min(32, password.length);
+            for (; i < n; ++i) {
+              hashData[i] = password[i];
+            }
+            let j = 0;
+            while (i < 32) {
+              hashData[i++] = CipherTransformFactory.#defaultPasswordBytes[j++];
+            }
+            let hash = calculateMD5(hashData, 0, i);
+            const keyLengthInBytes = keyLength >> 3;
+            if (revision >= 3) {
+              for (j = 0; j < 50; ++j) {
+                hash = calculateMD5(hash, 0, hash.length);
+              }
+            }
+            let cipher, userPassword;
+            if (revision >= 3) {
+              userPassword = ownerPassword;
+              const derivedKey = new Uint8Array(keyLengthInBytes);
+              for (j = 19; j >= 0; j--) {
+                for (let k = 0; k < keyLengthInBytes; ++k) {
+                  derivedKey[k] = hash[k] ^ j;
+                }
+                cipher = new ARCFourCipher(derivedKey);
+                userPassword = cipher.encryptBlock(userPassword);
+              }
+            } else {
+              cipher = new ARCFourCipher(hash.subarray(0, keyLengthInBytes));
+              userPassword = cipher.encryptBlock(ownerPassword);
+            }
+            return userPassword;
+          }
+          #buildObjectKey(num, gen, encryptionKey, isAes = false) {
+            const key = new Uint8Array(encryptionKey.length + 9);
+            const n = encryptionKey.length;
+            let i;
+            for (i = 0; i < n; ++i) {
+              key[i] = encryptionKey[i];
+            }
+            key[i++] = num & 0xff;
+            key[i++] = num >> 8 & 0xff;
+            key[i++] = num >> 16 & 0xff;
+            key[i++] = gen & 0xff;
+            key[i++] = gen >> 8 & 0xff;
+            if (isAes) {
+              key[i++] = 0x73;
+              key[i++] = 0x41;
+              key[i++] = 0x6c;
+              key[i++] = 0x54;
+            }
+            const hash = calculateMD5(key, 0, i);
+            return hash.subarray(0, Math.min(encryptionKey.length + 5, 16));
+          }
+          #buildCipherConstructor(cf, name, num, gen, key) {
+            if (!(name instanceof _primitives.Name)) {
+              throw new _util.FormatError("Invalid crypt filter name.");
+            }
+            const self = this;
+            const cryptFilter = cf.get(name.name);
+            const cfm = cryptFilter?.get("CFM");
+            if (!cfm || cfm.name === "None") {
+              return function () {
+                return new NullCipher();
+              };
+            }
+            if (cfm.name === "V2") {
+              return function () {
+                return new ARCFourCipher(self.#buildObjectKey(num, gen, key, false));
+              };
+            }
+            if (cfm.name === "AESV2") {
+              return function () {
+                return new AES128Cipher(self.#buildObjectKey(num, gen, key, true));
+              };
+            }
+            if (cfm.name === "AESV3") {
+              return function () {
+                return new AES256Cipher(key);
+              };
+            }
+            throw new _util.FormatError("Unknown crypto method");
+          }
+          constructor(dict, fileId, password) {
+            const filter = dict.get("Filter");
+            if (!(0, _primitives.isName)(filter, "Standard")) {
+              throw new _util.FormatError("unknown encryption method");
+            }
+            this.filterName = filter.name;
+            this.dict = dict;
+            const algorithm = dict.get("V");
+            if (!Number.isInteger(algorithm) || algorithm !== 1 && algorithm !== 2 && algorithm !== 4 && algorithm !== 5) {
+              throw new _util.FormatError("unsupported encryption algorithm");
+            }
+            this.algorithm = algorithm;
+            let keyLength = dict.get("Length");
+            if (!keyLength) {
+              if (algorithm <= 3) {
+                keyLength = 40;
+              } else {
+                const cfDict = dict.get("CF");
+                const streamCryptoName = dict.get("StmF");
+                if (cfDict instanceof _primitives.Dict && streamCryptoName instanceof _primitives.Name) {
+                  cfDict.suppressEncryption = true;
+                  const handlerDict = cfDict.get(streamCryptoName.name);
+                  keyLength = handlerDict?.get("Length") || 128;
+                  if (keyLength < 40) {
+                    keyLength <<= 3;
+                  }
+                }
+              }
+            }
+            if (!Number.isInteger(keyLength) || keyLength < 40 || keyLength % 8 !== 0) {
+              throw new _util.FormatError("invalid key length");
+            }
+            const ownerBytes = (0, _util.stringToBytes)(dict.get("O")),
+              userBytes = (0, _util.stringToBytes)(dict.get("U"));
+            const ownerPassword = ownerBytes.subarray(0, 32);
+            const userPassword = userBytes.subarray(0, 32);
+            const flags = dict.get("P");
+            const revision = dict.get("R");
+            const encryptMetadata = (algorithm === 4 || algorithm === 5) && dict.get("EncryptMetadata") !== false;
+            this.encryptMetadata = encryptMetadata;
+            const fileIdBytes = (0, _util.stringToBytes)(fileId);
+            let passwordBytes;
+            if (password) {
+              if (revision === 6) {
+                try {
+                  password = (0, _util.utf8StringToString)(password);
+                } catch {
+                  (0, _util.warn)("CipherTransformFactory: Unable to convert UTF8 encoded password.");
+                }
+              }
+              passwordBytes = (0, _util.stringToBytes)(password);
+            }
+            let encryptionKey;
+            if (algorithm !== 5) {
+              encryptionKey = this.#prepareKeyData(fileIdBytes, passwordBytes, ownerPassword, userPassword, flags, revision, keyLength, encryptMetadata);
+            } else {
+              const ownerValidationSalt = ownerBytes.subarray(32, 40);
+              const ownerKeySalt = ownerBytes.subarray(40, 48);
+              const uBytes = userBytes.subarray(0, 48);
+              const userValidationSalt = userBytes.subarray(32, 40);
+              const userKeySalt = userBytes.subarray(40, 48);
+              const ownerEncryption = (0, _util.stringToBytes)(dict.get("OE"));
+              const userEncryption = (0, _util.stringToBytes)(dict.get("UE"));
+              const perms = (0, _util.stringToBytes)(dict.get("Perms"));
+              encryptionKey = this.#createEncryptionKey20(revision, passwordBytes, ownerPassword, ownerValidationSalt, ownerKeySalt, uBytes, userPassword, userValidationSalt, userKeySalt, ownerEncryption, userEncryption, perms);
+            }
+            if (!encryptionKey && !password) {
+              throw new _util.PasswordException("No password given", _util.PasswordResponses.NEED_PASSWORD);
+            } else if (!encryptionKey && password) {
+              const decodedPassword = this.#decodeUserPassword(passwordBytes, ownerPassword, revision, keyLength);
+              encryptionKey = this.#prepareKeyData(fileIdBytes, decodedPassword, ownerPassword, userPassword, flags, revision, keyLength, encryptMetadata);
+            }
+            if (!encryptionKey) {
+              throw new _util.PasswordException("Incorrect Password", _util.PasswordResponses.INCORRECT_PASSWORD);
+            }
+            this.encryptionKey = encryptionKey;
+            if (algorithm >= 4) {
+              const cf = dict.get("CF");
+              if (cf instanceof _primitives.Dict) {
+                cf.suppressEncryption = true;
+              }
+              this.cf = cf;
+              this.stmf = dict.get("StmF") || _primitives.Name.get("Identity");
+              this.strf = dict.get("StrF") || _primitives.Name.get("Identity");
+              this.eff = dict.get("EFF") || this.stmf;
+            }
+          }
+          createCipherTransform(num, gen) {
+            if (this.algorithm === 4 || this.algorithm === 5) {
+              return new CipherTransform(this.#buildCipherConstructor(this.cf, this.strf, num, gen, this.encryptionKey), this.#buildCipherConstructor(this.cf, this.stmf, num, gen, this.encryptionKey));
+            }
+            const key = this.#buildObjectKey(num, gen, this.encryptionKey, false);
+            const cipherConstructor = function () {
+              return new ARCFourCipher(key);
+            };
+            return new CipherTransform(cipherConstructor, cipherConstructor);
+          }
+        }
+        exports.CipherTransformFactory = CipherTransformFactory;
+
+        /***/
+}),
+/* 75 */
+/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
+
+
+
+        Object.defineProperty(exports, "__esModule", ({
+          value: true
+        }));
+        exports.DecryptStream = void 0;
+        var _decode_stream = __w_pdfjs_require__(18);
+        const chunkSize = 512;
+        class DecryptStream extends _decode_stream.DecodeStream {
+          constructor(str, maybeLength, decrypt) {
+            super(maybeLength);
+            this.str = str;
+            this.dict = str.dict;
+            this.decrypt = decrypt;
+            this.nextChunk = null;
+            this.initialized = false;
+          }
+          readBlock() {
+            let chunk;
+            if (this.initialized) {
+              chunk = this.nextChunk;
+            } else {
+              chunk = this.str.getBytes(chunkSize);
+              this.initialized = true;
+            }
+            if (!chunk || chunk.length === 0) {
+              this.eof = true;
+              return;
+            }
+            this.nextChunk = this.str.getBytes(chunkSize);
+            const hasMoreData = this.nextChunk?.length > 0;
+            const decrypt = this.decrypt;
+            chunk = decrypt(chunk, !hasMoreData);
+            const bufferLength = this.bufferLength,
+              newLength = bufferLength + chunk.length,
+              buffer = this.ensureBuffer(newLength);
+            buffer.set(chunk, bufferLength);
+            this.bufferLength = newLength;
+          }
+        }
+        exports.DecryptStream = DecryptStream;
 
         /***/
 }),
@@ -45756,14 +46021,14 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           value: true
         }));
         exports.XFAFactory = void 0;
-        var _xfa_object = __w_pdfjs_require__(78);
-        var _bind = __w_pdfjs_require__(82);
-        var _data = __w_pdfjs_require__(88);
-        var _fonts = __w_pdfjs_require__(86);
-        var _utils = __w_pdfjs_require__(79);
+        var _symbol_utils = __w_pdfjs_require__(78);
+        var _bind = __w_pdfjs_require__(79);
+        var _data = __w_pdfjs_require__(89);
+        var _fonts = __w_pdfjs_require__(85);
+        var _utils = __w_pdfjs_require__(84);
         var _util = __w_pdfjs_require__(2);
-        var _parser = __w_pdfjs_require__(89);
-        var _xhtml = __w_pdfjs_require__(99);
+        var _parser = __w_pdfjs_require__(90);
+        var _xhtml = __w_pdfjs_require__(100);
         class XFAFactory {
           constructor(data) {
             try {
@@ -45771,7 +46036,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               const binder = new _bind.Binder(this.root);
               this.form = binder.bind();
               this.dataHandler = new _data.DataHandler(this.root, binder.getData());
-              this.form[_xfa_object.$globalData].template = this.form;
+              this.form[_symbol_utils.$globalData].template = this.form;
             } catch (e) {
               (0, _util.warn)(`XFA - an error occurred during parsing and binding: ${e}`);
             }
@@ -45780,7 +46045,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             return this.root && this.form;
           }
           _createPagesHelper() {
-            const iterator = this.form[_xfa_object.$toPages]();
+            const iterator = this.form[_symbol_utils.$toPages]();
             return new Promise((resolve, reject) => {
               const nextIteration = () => {
                 try {
@@ -45821,14 +46086,14 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             return this.dims.length;
           }
           setImages(images) {
-            this.form[_xfa_object.$globalData].images = images;
+            this.form[_symbol_utils.$globalData].images = images;
           }
           setFonts(fonts) {
-            this.form[_xfa_object.$globalData].fontFinder = new _fonts.FontFinder(fonts);
+            this.form[_symbol_utils.$globalData].fontFinder = new _fonts.FontFinder(fonts);
             const missingFonts = [];
-            for (let typeface of this.form[_xfa_object.$globalData].usedTypefaces) {
+            for (let typeface of this.form[_symbol_utils.$globalData].usedTypefaces) {
               typeface = (0, _utils.stripQuotes)(typeface);
-              const font = this.form[_xfa_object.$globalData].fontFinder.find(typeface);
+              const font = this.form[_symbol_utils.$globalData].fontFinder.find(typeface);
               if (!font) {
                 missingFonts.push(typeface);
               }
@@ -45839,7 +46104,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             return null;
           }
           appendFonts(fonts, reallyMissingFonts) {
-            this.form[_xfa_object.$globalData].fontFinder.add(fonts, reallyMissingFonts);
+            this.form[_symbol_utils.$globalData].fontFinder.add(fonts, reallyMissingFonts);
           }
           async getPages() {
             if (!this.pages) {
@@ -45864,12 +46129,12 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             }
             try {
               let root = new _parser.XFAParser(_xhtml.XhtmlNamespace, true).parse(rc);
-              if (!["body", "xhtml"].includes(root[_xfa_object.$nodeName])) {
+              if (!["body", "xhtml"].includes(root[_symbol_utils.$nodeName])) {
                 const newRoot = _xhtml.XhtmlNamespace.body({});
-                newRoot[_xfa_object.$appendChild](root);
+                newRoot[_symbol_utils.$appendChild](root);
                 root = newRoot;
               }
-              const result = root[_xfa_object.$toHTML]();
+              const result = root[_symbol_utils.$toHTML]();
               if (!result.success) {
                 return null;
               }
@@ -45887,7 +46152,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               }
               return {
                 html,
-                str: root[_xfa_object.$text]()
+                str: root[_symbol_utils.$text]()
               };
             } catch (e) {
               (0, _util.warn)(`XFA - an error occurred during parsing of rich text: ${e}`);
@@ -45900,19 +46165,14 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
         /***/
 }),
 /* 78 */
-/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
+/***/ ((__unused_webpack_module, exports) => {
 
 
 
         Object.defineProperty(exports, "__esModule", ({
           value: true
         }));
-        exports.XmlObject = exports.XFAObjectArray = exports.XFAObject = exports.XFAAttribute = exports.StringObject = exports.OptionObject = exports.Option10 = exports.Option01 = exports.IntegerObject = exports.ContentObject = exports.$uid = exports.$toStyle = exports.$toString = exports.$toPages = exports.$toHTML = exports.$text = exports.$tabIndex = exports.$setValue = exports.$setSetAttributes = exports.$setId = exports.$searchNode = exports.$root = exports.$resolvePrototypes = exports.$removeChild = exports.$pushPara = exports.$pushGlyphs = exports.$popPara = exports.$onText = exports.$onChildCheck = exports.$onChild = exports.$nsAttributes = exports.$nodeName = exports.$namespaceId = exports.$isUsable = exports.$isTransparent = exports.$isThereMoreWidth = exports.$isSplittable = exports.$isNsAgnostic = exports.$isDescendent = exports.$isDataValue = exports.$isCDATAXml = exports.$isBindable = exports.$insertAt = exports.$indexOf = exports.$ids = exports.$hasSettableValue = exports.$globalData = exports.$getTemplateRoot = exports.$getSubformParent = exports.$getRealChildrenByNameIt = exports.$getParent = exports.$getNextPage = exports.$getExtra = exports.$getDataValue = exports.$getContainedChildren = exports.$getChildrenByNameIt = exports.$getChildrenByName = exports.$getChildrenByClass = exports.$getChildren = exports.$getAvailableSpace = exports.$getAttributes = exports.$getAttributeIt = exports.$flushHTML = exports.$finalize = exports.$extra = exports.$dump = exports.$data = exports.$content = exports.$consumed = exports.$clone = exports.$cleanup = exports.$cleanPage = exports.$clean = exports.$childrenToHTML = exports.$appendChild = exports.$addHTML = exports.$acceptWhitespace = void 0;
-        var _utils = __w_pdfjs_require__(79);
-        var _util = __w_pdfjs_require__(2);
-        var _core_utils = __w_pdfjs_require__(3);
-        var _namespaces = __w_pdfjs_require__(80);
-        var _som = __w_pdfjs_require__(81);
+        exports.$uid = exports.$toStyle = exports.$toString = exports.$toPages = exports.$toHTML = exports.$text = exports.$tabIndex = exports.$setValue = exports.$setSetAttributes = exports.$setId = exports.$searchNode = exports.$root = exports.$resolvePrototypes = exports.$removeChild = exports.$pushPara = exports.$pushGlyphs = exports.$popPara = exports.$onText = exports.$onChildCheck = exports.$onChild = exports.$nsAttributes = exports.$nodeName = exports.$namespaceId = exports.$lastAttribute = exports.$isUsable = exports.$isTransparent = exports.$isThereMoreWidth = exports.$isSplittable = exports.$isNsAgnostic = exports.$isDescendent = exports.$isDataValue = exports.$isCDATAXml = exports.$isBindable = exports.$insertAt = exports.$indexOf = exports.$ids = exports.$hasSettableValue = exports.$globalData = exports.$getTemplateRoot = exports.$getSubformParent = exports.$getRealChildrenByNameIt = exports.$getParent = exports.$getNextPage = exports.$getExtra = exports.$getDataValue = exports.$getContainedChildren = exports.$getChildrenByNameIt = exports.$getChildrenByName = exports.$getChildrenByClass = exports.$getChildren = exports.$getAvailableSpace = exports.$getAttributes = exports.$getAttributeIt = exports.$flushHTML = exports.$finalize = exports.$extra = exports.$dump = exports.$data = exports.$content = exports.$consumed = exports.$clone = exports.$cleanup = exports.$cleanPage = exports.$clean = exports.$childrenToHTML = exports.$appendChild = exports.$addHTML = exports.$acceptWhitespace = void 0;
         const $acceptWhitespace = Symbol();
         exports.$acceptWhitespace = $acceptWhitespace;
         const $addHTML = Symbol();
@@ -46002,6 +46262,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
         const $isUsable = Symbol();
         exports.$isUsable = $isUsable;
         const $lastAttribute = Symbol();
+        exports.$lastAttribute = $lastAttribute;
         const $namespaceId = Symbol("namespaceId");
         exports.$namespaceId = $namespaceId;
         const $nodeName = Symbol("nodeName");
@@ -46048,791 +46309,6 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
         exports.$toStyle = $toStyle;
         const $uid = Symbol("uid");
         exports.$uid = $uid;
-        const _applyPrototype = Symbol();
-        const _attributes = Symbol();
-        const _attributeNames = Symbol();
-        const _children = Symbol("_children");
-        const _cloneAttribute = Symbol();
-        const _dataValue = Symbol();
-        const _defaultValue = Symbol();
-        const _filteredChildrenGenerator = Symbol();
-        const _getPrototype = Symbol();
-        const _getUnsetAttributes = Symbol();
-        const _hasChildren = Symbol();
-        const _max = Symbol();
-        const _options = Symbol();
-        const _parent = Symbol("parent");
-        const _resolvePrototypesHelper = Symbol();
-        const _setAttributes = Symbol();
-        const _validator = Symbol();
-        let uid = 0;
-        const NS_DATASETS = _namespaces.NamespaceIds.datasets.id;
-        class XFAObject {
-          constructor(nsId, name, hasChildren = false) {
-            this[$namespaceId] = nsId;
-            this[$nodeName] = name;
-            this[_hasChildren] = hasChildren;
-            this[_parent] = null;
-            this[_children] = [];
-            this[$uid] = `${name}${uid++}`;
-            this[$globalData] = null;
-          }
-          [$onChild](child) {
-            if (!this[_hasChildren] || !this[$onChildCheck](child)) {
-              return false;
-            }
-            const name = child[$nodeName];
-            const node = this[name];
-            if (node instanceof XFAObjectArray) {
-              if (node.push(child)) {
-                this[$appendChild](child);
-                return true;
-              }
-            } else {
-              if (node !== null) {
-                this[$removeChild](node);
-              }
-              this[name] = child;
-              this[$appendChild](child);
-              return true;
-            }
-            let id = "";
-            if (this.id) {
-              id = ` (id: ${this.id})`;
-            } else if (this.name) {
-              id = ` (name: ${this.name} ${this.h.value})`;
-            }
-            (0, _util.warn)(`XFA - node "${this[$nodeName]}"${id} has already enough "${name}"!`);
-            return false;
-          }
-          [$onChildCheck](child) {
-            return this.hasOwnProperty(child[$nodeName]) && child[$namespaceId] === this[$namespaceId];
-          }
-          [$isNsAgnostic]() {
-            return false;
-          }
-          [$acceptWhitespace]() {
-            return false;
-          }
-          [$isCDATAXml]() {
-            return false;
-          }
-          [$isBindable]() {
-            return false;
-          }
-          [$popPara]() {
-            if (this.para) {
-              this[$getTemplateRoot]()[$extra].paraStack.pop();
-            }
-          }
-          [$pushPara]() {
-            this[$getTemplateRoot]()[$extra].paraStack.push(this.para);
-          }
-          [$setId](ids) {
-            if (this.id && this[$namespaceId] === _namespaces.NamespaceIds.template.id) {
-              ids.set(this.id, this);
-            }
-          }
-          [$getTemplateRoot]() {
-            return this[$globalData].template;
-          }
-          [$isSplittable]() {
-            return false;
-          }
-          [$isThereMoreWidth]() {
-            return false;
-          }
-          [$appendChild](child) {
-            child[_parent] = this;
-            this[_children].push(child);
-            if (!child[$globalData] && this[$globalData]) {
-              child[$globalData] = this[$globalData];
-            }
-          }
-          [$removeChild](child) {
-            const i = this[_children].indexOf(child);
-            this[_children].splice(i, 1);
-          }
-          [$hasSettableValue]() {
-            return this.hasOwnProperty("value");
-          }
-          [$setValue](_) { }
-          [$onText](_) { }
-          [$finalize]() { }
-          [$clean](builder) {
-            delete this[_hasChildren];
-            if (this[$cleanup]) {
-              builder.clean(this[$cleanup]);
-              delete this[$cleanup];
-            }
-          }
-          [$indexOf](child) {
-            return this[_children].indexOf(child);
-          }
-          [$insertAt](i, child) {
-            child[_parent] = this;
-            this[_children].splice(i, 0, child);
-            if (!child[$globalData] && this[$globalData]) {
-              child[$globalData] = this[$globalData];
-            }
-          }
-          [$isTransparent]() {
-            return !this.name;
-          }
-          [$lastAttribute]() {
-            return "";
-          }
-          [$text]() {
-            if (this[_children].length === 0) {
-              return this[$content];
-            }
-            return this[_children].map(c => c[$text]()).join("");
-          }
-          get [_attributeNames]() {
-            const proto = Object.getPrototypeOf(this);
-            if (!proto._attributes) {
-              const attributes = proto._attributes = new Set();
-              for (const name of Object.getOwnPropertyNames(this)) {
-                if (this[name] === null || this[name] instanceof XFAObject || this[name] instanceof XFAObjectArray) {
-                  break;
-                }
-                attributes.add(name);
-              }
-            }
-            return (0, _util.shadow)(this, _attributeNames, proto._attributes);
-          }
-          [$isDescendent](parent) {
-            let node = this;
-            while (node) {
-              if (node === parent) {
-                return true;
-              }
-              node = node[$getParent]();
-            }
-            return false;
-          }
-          [$getParent]() {
-            return this[_parent];
-          }
-          [$getSubformParent]() {
-            return this[$getParent]();
-          }
-          [$getChildren](name = null) {
-            if (!name) {
-              return this[_children];
-            }
-            return this[name];
-          }
-          [$dump]() {
-            const dumped = Object.create(null);
-            if (this[$content]) {
-              dumped.$content = this[$content];
-            }
-            for (const name of Object.getOwnPropertyNames(this)) {
-              const value = this[name];
-              if (value === null) {
-                continue;
-              }
-              if (value instanceof XFAObject) {
-                dumped[name] = value[$dump]();
-              } else if (value instanceof XFAObjectArray) {
-                if (!value.isEmpty()) {
-                  dumped[name] = value.dump();
-                }
-              } else {
-                dumped[name] = value;
-              }
-            }
-            return dumped;
-          }
-          [$toStyle]() {
-            return null;
-          }
-          [$toHTML]() {
-            return _utils.HTMLResult.EMPTY;
-          }
-          *[$getContainedChildren]() {
-            for (const node of this[$getChildren]()) {
-              yield node;
-            }
-          }
-          *[_filteredChildrenGenerator](filter, include) {
-            for (const node of this[$getContainedChildren]()) {
-              if (!filter || include === filter.has(node[$nodeName])) {
-                const availableSpace = this[$getAvailableSpace]();
-                const res = node[$toHTML](availableSpace);
-                if (!res.success) {
-                  this[$extra].failingNode = node;
-                }
-                yield res;
-              }
-            }
-          }
-          [$flushHTML]() {
-            return null;
-          }
-          [$addHTML](html, bbox) {
-            this[$extra].children.push(html);
-          }
-          [$getAvailableSpace]() { }
-          [$childrenToHTML]({
-            filter = null,
-            include = true
-          }) {
-            if (!this[$extra].generator) {
-              this[$extra].generator = this[_filteredChildrenGenerator](filter, include);
-            } else {
-              const availableSpace = this[$getAvailableSpace]();
-              const res = this[$extra].failingNode[$toHTML](availableSpace);
-              if (!res.success) {
-                return res;
-              }
-              if (res.html) {
-                this[$addHTML](res.html, res.bbox);
-              }
-              delete this[$extra].failingNode;
-            }
-            while (true) {
-              const gen = this[$extra].generator.next();
-              if (gen.done) {
-                break;
-              }
-              const res = gen.value;
-              if (!res.success) {
-                return res;
-              }
-              if (res.html) {
-                this[$addHTML](res.html, res.bbox);
-              }
-            }
-            this[$extra].generator = null;
-            return _utils.HTMLResult.EMPTY;
-          }
-          [$setSetAttributes](attributes) {
-            this[_setAttributes] = new Set(Object.keys(attributes));
-          }
-          [_getUnsetAttributes](protoAttributes) {
-            const allAttr = this[_attributeNames];
-            const setAttr = this[_setAttributes];
-            return [...protoAttributes].filter(x => allAttr.has(x) && !setAttr.has(x));
-          }
-          [$resolvePrototypes](ids, ancestors = new Set()) {
-            for (const child of this[_children]) {
-              child[_resolvePrototypesHelper](ids, ancestors);
-            }
-          }
-          [_resolvePrototypesHelper](ids, ancestors) {
-            const proto = this[_getPrototype](ids, ancestors);
-            if (proto) {
-              this[_applyPrototype](proto, ids, ancestors);
-            } else {
-              this[$resolvePrototypes](ids, ancestors);
-            }
-          }
-          [_getPrototype](ids, ancestors) {
-            const {
-              use,
-              usehref
-            } = this;
-            if (!use && !usehref) {
-              return null;
-            }
-            let proto = null;
-            let somExpression = null;
-            let id = null;
-            let ref = use;
-            if (usehref) {
-              ref = usehref;
-              if (usehref.startsWith("#som(") && usehref.endsWith(")")) {
-                somExpression = usehref.slice("#som(".length, -1);
-              } else if (usehref.startsWith(".#som(") && usehref.endsWith(")")) {
-                somExpression = usehref.slice(".#som(".length, -1);
-              } else if (usehref.startsWith("#")) {
-                id = usehref.slice(1);
-              } else if (usehref.startsWith(".#")) {
-                id = usehref.slice(2);
-              }
-            } else if (use.startsWith("#")) {
-              id = use.slice(1);
-            } else {
-              somExpression = use;
-            }
-            this.use = this.usehref = "";
-            if (id) {
-              proto = ids.get(id);
-            } else {
-              proto = (0, _som.searchNode)(ids.get($root), this, somExpression, true, false);
-              if (proto) {
-                proto = proto[0];
-              }
-            }
-            if (!proto) {
-              (0, _util.warn)(`XFA - Invalid prototype reference: ${ref}.`);
-              return null;
-            }
-            if (proto[$nodeName] !== this[$nodeName]) {
-              (0, _util.warn)(`XFA - Incompatible prototype: ${proto[$nodeName]} !== ${this[$nodeName]}.`);
-              return null;
-            }
-            if (ancestors.has(proto)) {
-              (0, _util.warn)(`XFA - Cycle detected in prototypes use.`);
-              return null;
-            }
-            ancestors.add(proto);
-            const protoProto = proto[_getPrototype](ids, ancestors);
-            if (protoProto) {
-              proto[_applyPrototype](protoProto, ids, ancestors);
-            }
-            proto[$resolvePrototypes](ids, ancestors);
-            ancestors.delete(proto);
-            return proto;
-          }
-          [_applyPrototype](proto, ids, ancestors) {
-            if (ancestors.has(proto)) {
-              (0, _util.warn)(`XFA - Cycle detected in prototypes use.`);
-              return;
-            }
-            if (!this[$content] && proto[$content]) {
-              this[$content] = proto[$content];
-            }
-            const newAncestors = new Set(ancestors);
-            newAncestors.add(proto);
-            for (const unsetAttrName of this[_getUnsetAttributes](proto[_setAttributes])) {
-              this[unsetAttrName] = proto[unsetAttrName];
-              if (this[_setAttributes]) {
-                this[_setAttributes].add(unsetAttrName);
-              }
-            }
-            for (const name of Object.getOwnPropertyNames(this)) {
-              if (this[_attributeNames].has(name)) {
-                continue;
-              }
-              const value = this[name];
-              const protoValue = proto[name];
-              if (value instanceof XFAObjectArray) {
-                for (const child of value[_children]) {
-                  child[_resolvePrototypesHelper](ids, ancestors);
-                }
-                for (let i = value[_children].length, ii = protoValue[_children].length; i < ii; i++) {
-                  const child = proto[_children][i][$clone]();
-                  if (value.push(child)) {
-                    child[_parent] = this;
-                    this[_children].push(child);
-                    child[_resolvePrototypesHelper](ids, ancestors);
-                  } else {
-                    break;
-                  }
-                }
-                continue;
-              }
-              if (value !== null) {
-                value[$resolvePrototypes](ids, ancestors);
-                if (protoValue) {
-                  value[_applyPrototype](protoValue, ids, ancestors);
-                }
-                continue;
-              }
-              if (protoValue !== null) {
-                const child = protoValue[$clone]();
-                child[_parent] = this;
-                this[name] = child;
-                this[_children].push(child);
-                child[_resolvePrototypesHelper](ids, ancestors);
-              }
-            }
-          }
-          static [_cloneAttribute](obj) {
-            if (Array.isArray(obj)) {
-              return obj.map(x => XFAObject[_cloneAttribute](x));
-            }
-            if (typeof obj === "object" && obj !== null) {
-              return Object.assign({}, obj);
-            }
-            return obj;
-          }
-          [$clone]() {
-            const clone = Object.create(Object.getPrototypeOf(this));
-            for (const $symbol of Object.getOwnPropertySymbols(this)) {
-              try {
-                clone[$symbol] = this[$symbol];
-              } catch (_) {
-                (0, _util.shadow)(clone, $symbol, this[$symbol]);
-              }
-            }
-            clone[$uid] = `${clone[$nodeName]}${uid++}`;
-            clone[_children] = [];
-            for (const name of Object.getOwnPropertyNames(this)) {
-              if (this[_attributeNames].has(name)) {
-                clone[name] = XFAObject[_cloneAttribute](this[name]);
-                continue;
-              }
-              const value = this[name];
-              if (value instanceof XFAObjectArray) {
-                clone[name] = new XFAObjectArray(value[_max]);
-              } else {
-                clone[name] = null;
-              }
-            }
-            for (const child of this[_children]) {
-              const name = child[$nodeName];
-              const clonedChild = child[$clone]();
-              clone[_children].push(clonedChild);
-              clonedChild[_parent] = clone;
-              if (clone[name] === null) {
-                clone[name] = clonedChild;
-              } else {
-                clone[name][_children].push(clonedChild);
-              }
-            }
-            return clone;
-          }
-          [$getChildren](name = null) {
-            if (!name) {
-              return this[_children];
-            }
-            return this[_children].filter(c => c[$nodeName] === name);
-          }
-          [$getChildrenByClass](name) {
-            return this[name];
-          }
-          [$getChildrenByName](name, allTransparent, first = true) {
-            return Array.from(this[$getChildrenByNameIt](name, allTransparent, first));
-          }
-          *[$getChildrenByNameIt](name, allTransparent, first = true) {
-            if (name === "parent") {
-              yield this[_parent];
-              return;
-            }
-            for (const child of this[_children]) {
-              if (child[$nodeName] === name) {
-                yield child;
-              }
-              if (child.name === name) {
-                yield child;
-              }
-              if (allTransparent || child[$isTransparent]()) {
-                yield* child[$getChildrenByNameIt](name, allTransparent, false);
-              }
-            }
-            if (first && this[_attributeNames].has(name)) {
-              yield new XFAAttribute(this, name, this[name]);
-            }
-          }
-        }
-        exports.XFAObject = XFAObject;
-        class XFAObjectArray {
-          constructor(max = Infinity) {
-            this[_max] = max;
-            this[_children] = [];
-          }
-          push(child) {
-            const len = this[_children].length;
-            if (len <= this[_max]) {
-              this[_children].push(child);
-              return true;
-            }
-            (0, _util.warn)(`XFA - node "${child[$nodeName]}" accepts no more than ${this[_max]} children`);
-            return false;
-          }
-          isEmpty() {
-            return this[_children].length === 0;
-          }
-          dump() {
-            return this[_children].length === 1 ? this[_children][0][$dump]() : this[_children].map(x => x[$dump]());
-          }
-          [$clone]() {
-            const clone = new XFAObjectArray(this[_max]);
-            clone[_children] = this[_children].map(c => c[$clone]());
-            return clone;
-          }
-          get children() {
-            return this[_children];
-          }
-          clear() {
-            this[_children].length = 0;
-          }
-        }
-        exports.XFAObjectArray = XFAObjectArray;
-        class XFAAttribute {
-          constructor(node, name, value) {
-            this[_parent] = node;
-            this[$nodeName] = name;
-            this[$content] = value;
-            this[$consumed] = false;
-            this[$uid] = `attribute${uid++}`;
-          }
-          [$getParent]() {
-            return this[_parent];
-          }
-          [$isDataValue]() {
-            return true;
-          }
-          [$getDataValue]() {
-            return this[$content].trim();
-          }
-          [$setValue](value) {
-            value = value.value || "";
-            this[$content] = value.toString();
-          }
-          [$text]() {
-            return this[$content];
-          }
-          [$isDescendent](parent) {
-            return this[_parent] === parent || this[_parent][$isDescendent](parent);
-          }
-        }
-        exports.XFAAttribute = XFAAttribute;
-        class XmlObject extends XFAObject {
-          constructor(nsId, name, attributes = {}) {
-            super(nsId, name);
-            this[$content] = "";
-            this[_dataValue] = null;
-            if (name !== "#text") {
-              const map = new Map();
-              this[_attributes] = map;
-              for (const [attrName, value] of Object.entries(attributes)) {
-                map.set(attrName, new XFAAttribute(this, attrName, value));
-              }
-              if (attributes.hasOwnProperty($nsAttributes)) {
-                const dataNode = attributes[$nsAttributes].xfa.dataNode;
-                if (dataNode !== undefined) {
-                  if (dataNode === "dataGroup") {
-                    this[_dataValue] = false;
-                  } else if (dataNode === "dataValue") {
-                    this[_dataValue] = true;
-                  }
-                }
-              }
-            }
-            this[$consumed] = false;
-          }
-          [$toString](buf) {
-            const tagName = this[$nodeName];
-            if (tagName === "#text") {
-              buf.push((0, _core_utils.encodeToXmlString)(this[$content]));
-              return;
-            }
-            const utf8TagName = (0, _util.utf8StringToString)(tagName);
-            const prefix = this[$namespaceId] === NS_DATASETS ? "xfa:" : "";
-            buf.push(`<${prefix}${utf8TagName}`);
-            for (const [name, value] of this[_attributes].entries()) {
-              const utf8Name = (0, _util.utf8StringToString)(name);
-              buf.push(` ${utf8Name}="${(0, _core_utils.encodeToXmlString)(value[$content])}"`);
-            }
-            if (this[_dataValue] !== null) {
-              if (this[_dataValue]) {
-                buf.push(` xfa:dataNode="dataValue"`);
-              } else {
-                buf.push(` xfa:dataNode="dataGroup"`);
-              }
-            }
-            if (!this[$content] && this[_children].length === 0) {
-              buf.push("/>");
-              return;
-            }
-            buf.push(">");
-            if (this[$content]) {
-              if (typeof this[$content] === "string") {
-                buf.push((0, _core_utils.encodeToXmlString)(this[$content]));
-              } else {
-                this[$content][$toString](buf);
-              }
-            } else {
-              for (const child of this[_children]) {
-                child[$toString](buf);
-              }
-            }
-            buf.push(`</${prefix}${utf8TagName}>`);
-          }
-          [$onChild](child) {
-            if (this[$content]) {
-              const node = new XmlObject(this[$namespaceId], "#text");
-              this[$appendChild](node);
-              node[$content] = this[$content];
-              this[$content] = "";
-            }
-            this[$appendChild](child);
-            return true;
-          }
-          [$onText](str) {
-            this[$content] += str;
-          }
-          [$finalize]() {
-            if (this[$content] && this[_children].length > 0) {
-              const node = new XmlObject(this[$namespaceId], "#text");
-              this[$appendChild](node);
-              node[$content] = this[$content];
-              delete this[$content];
-            }
-          }
-          [$toHTML]() {
-            if (this[$nodeName] === "#text") {
-              return _utils.HTMLResult.success({
-                name: "#text",
-                value: this[$content]
-              });
-            }
-            return _utils.HTMLResult.EMPTY;
-          }
-          [$getChildren](name = null) {
-            if (!name) {
-              return this[_children];
-            }
-            return this[_children].filter(c => c[$nodeName] === name);
-          }
-          [$getAttributes]() {
-            return this[_attributes];
-          }
-          [$getChildrenByClass](name) {
-            const value = this[_attributes].get(name);
-            if (value !== undefined) {
-              return value;
-            }
-            return this[$getChildren](name);
-          }
-          *[$getChildrenByNameIt](name, allTransparent) {
-            const value = this[_attributes].get(name);
-            if (value) {
-              yield value;
-            }
-            for (const child of this[_children]) {
-              if (child[$nodeName] === name) {
-                yield child;
-              }
-              if (allTransparent) {
-                yield* child[$getChildrenByNameIt](name, allTransparent);
-              }
-            }
-          }
-          *[$getAttributeIt](name, skipConsumed) {
-            const value = this[_attributes].get(name);
-            if (value && (!skipConsumed || !value[$consumed])) {
-              yield value;
-            }
-            for (const child of this[_children]) {
-              yield* child[$getAttributeIt](name, skipConsumed);
-            }
-          }
-          *[$getRealChildrenByNameIt](name, allTransparent, skipConsumed) {
-            for (const child of this[_children]) {
-              if (child[$nodeName] === name && (!skipConsumed || !child[$consumed])) {
-                yield child;
-              }
-              if (allTransparent) {
-                yield* child[$getRealChildrenByNameIt](name, allTransparent, skipConsumed);
-              }
-            }
-          }
-          [$isDataValue]() {
-            if (this[_dataValue] === null) {
-              return this[_children].length === 0 || this[_children][0][$namespaceId] === _namespaces.NamespaceIds.xhtml.id;
-            }
-            return this[_dataValue];
-          }
-          [$getDataValue]() {
-            if (this[_dataValue] === null) {
-              if (this[_children].length === 0) {
-                return this[$content].trim();
-              }
-              if (this[_children][0][$namespaceId] === _namespaces.NamespaceIds.xhtml.id) {
-                return this[_children][0][$text]().trim();
-              }
-              return null;
-            }
-            return this[$content].trim();
-          }
-          [$setValue](value) {
-            value = value.value || "";
-            this[$content] = value.toString();
-          }
-          [$dump](hasNS = false) {
-            const dumped = Object.create(null);
-            if (hasNS) {
-              dumped.$ns = this[$namespaceId];
-            }
-            if (this[$content]) {
-              dumped.$content = this[$content];
-            }
-            dumped.$name = this[$nodeName];
-            dumped.children = [];
-            for (const child of this[_children]) {
-              dumped.children.push(child[$dump](hasNS));
-            }
-            dumped.attributes = Object.create(null);
-            for (const [name, value] of this[_attributes]) {
-              dumped.attributes[name] = value[$content];
-            }
-            return dumped;
-          }
-        }
-        exports.XmlObject = XmlObject;
-        class ContentObject extends XFAObject {
-          constructor(nsId, name) {
-            super(nsId, name);
-            this[$content] = "";
-          }
-          [$onText](text) {
-            this[$content] += text;
-          }
-          [$finalize]() { }
-        }
-        exports.ContentObject = ContentObject;
-        class OptionObject extends ContentObject {
-          constructor(nsId, name, options) {
-            super(nsId, name);
-            this[_options] = options;
-          }
-          [$finalize]() {
-            this[$content] = (0, _utils.getKeyword)({
-              data: this[$content],
-              defaultValue: this[_options][0],
-              validate: k => this[_options].includes(k)
-            });
-          }
-          [$clean](builder) {
-            super[$clean](builder);
-            delete this[_options];
-          }
-        }
-        exports.OptionObject = OptionObject;
-        class StringObject extends ContentObject {
-          [$finalize]() {
-            this[$content] = this[$content].trim();
-          }
-        }
-        exports.StringObject = StringObject;
-        class IntegerObject extends ContentObject {
-          constructor(nsId, name, defaultValue, validator) {
-            super(nsId, name);
-            this[_defaultValue] = defaultValue;
-            this[_validator] = validator;
-          }
-          [$finalize]() {
-            this[$content] = (0, _utils.getInteger)({
-              data: this[$content],
-              defaultValue: this[_defaultValue],
-              validate: this[_validator]
-            });
-          }
-          [$clean](builder) {
-            super[$clean](builder);
-            delete this[_defaultValue];
-            delete this[_validator];
-          }
-        }
-        exports.IntegerObject = IntegerObject;
-        class Option01 extends IntegerObject {
-          constructor(nsId, name) {
-            super(nsId, name, 0, n => n === 1);
-          }
-        }
-        exports.Option01 = Option01;
-        class Option10 extends IntegerObject {
-          constructor(nsId, name) {
-            super(nsId, name, 1, n => n === 0);
-          }
-        }
-        exports.Option10 = Option10;
 
         /***/
 }),
@@ -46844,599 +46320,26 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
         Object.defineProperty(exports, "__esModule", ({
           value: true
         }));
-        exports.HTMLResult = void 0;
-        exports.getBBox = getBBox;
-        exports.getColor = getColor;
-        exports.getFloat = getFloat;
-        exports.getInteger = getInteger;
-        exports.getKeyword = getKeyword;
-        exports.getMeasurement = getMeasurement;
-        exports.getRatio = getRatio;
-        exports.getRelevant = getRelevant;
-        exports.getStringOption = getStringOption;
-        exports.stripQuotes = stripQuotes;
-        var _util = __w_pdfjs_require__(2);
-        const dimConverters = {
-          pt: x => x,
-          cm: x => x / 2.54 * 72,
-          mm: x => x / (10 * 2.54) * 72,
-          in: x => x * 72,
-          px: x => x
-        };
-        const measurementPattern = /([+-]?\d+\.?\d*)(.*)/;
-        function stripQuotes(str) {
-          if (str.startsWith("'") || str.startsWith('"')) {
-            return str.slice(1, -1);
-          }
-          return str;
-        }
-        function getInteger({
-          data,
-          defaultValue,
-          validate
-        }) {
-          if (!data) {
-            return defaultValue;
-          }
-          data = data.trim();
-          const n = parseInt(data, 10);
-          if (!isNaN(n) && validate(n)) {
-            return n;
-          }
-          return defaultValue;
-        }
-        function getFloat({
-          data,
-          defaultValue,
-          validate
-        }) {
-          if (!data) {
-            return defaultValue;
-          }
-          data = data.trim();
-          const n = parseFloat(data);
-          if (!isNaN(n) && validate(n)) {
-            return n;
-          }
-          return defaultValue;
-        }
-        function getKeyword({
-          data,
-          defaultValue,
-          validate
-        }) {
-          if (!data) {
-            return defaultValue;
-          }
-          data = data.trim();
-          if (validate(data)) {
-            return data;
-          }
-          return defaultValue;
-        }
-        function getStringOption(data, options) {
-          return getKeyword({
-            data,
-            defaultValue: options[0],
-            validate: k => options.includes(k)
-          });
-        }
-        function getMeasurement(str, def = "0") {
-          def ||= "0";
-          if (!str) {
-            return getMeasurement(def);
-          }
-          const match = str.trim().match(measurementPattern);
-          if (!match) {
-            return getMeasurement(def);
-          }
-          const [, valueStr, unit] = match;
-          const value = parseFloat(valueStr);
-          if (isNaN(value)) {
-            return getMeasurement(def);
-          }
-          if (value === 0) {
-            return 0;
-          }
-          const conv = dimConverters[unit];
-          if (conv) {
-            return conv(value);
-          }
-          return value;
-        }
-        function getRatio(data) {
-          if (!data) {
-            return {
-              num: 1,
-              den: 1
-            };
-          }
-          const ratio = data.trim().split(/\s*:\s*/).map(x => parseFloat(x)).filter(x => !isNaN(x));
-          if (ratio.length === 1) {
-            ratio.push(1);
-          }
-          if (ratio.length === 0) {
-            return {
-              num: 1,
-              den: 1
-            };
-          }
-          const [num, den] = ratio;
-          return {
-            num,
-            den
-          };
-        }
-        function getRelevant(data) {
-          if (!data) {
-            return [];
-          }
-          return data.trim().split(/\s+/).map(e => {
-            return {
-              excluded: e[0] === "-",
-              viewname: e.substring(1)
-            };
-          });
-        }
-        function getColor(data, def = [0, 0, 0]) {
-          let [r, g, b] = def;
-          if (!data) {
-            return {
-              r,
-              g,
-              b
-            };
-          }
-          const color = data.trim().split(/\s*,\s*/).map(c => Math.min(Math.max(0, parseInt(c.trim(), 10)), 255)).map(c => isNaN(c) ? 0 : c);
-          if (color.length < 3) {
-            return {
-              r,
-              g,
-              b
-            };
-          }
-          [r, g, b] = color;
-          return {
-            r,
-            g,
-            b
-          };
-        }
-        function getBBox(data) {
-          const def = -1;
-          if (!data) {
-            return {
-              x: def,
-              y: def,
-              width: def,
-              height: def
-            };
-          }
-          const bbox = data.trim().split(/\s*,\s*/).map(m => getMeasurement(m, "-1"));
-          if (bbox.length < 4 || bbox[2] < 0 || bbox[3] < 0) {
-            return {
-              x: def,
-              y: def,
-              width: def,
-              height: def
-            };
-          }
-          const [x, y, width, height] = bbox;
-          return {
-            x,
-            y,
-            width,
-            height
-          };
-        }
-        class HTMLResult {
-          static get FAILURE() {
-            return (0, _util.shadow)(this, "FAILURE", new HTMLResult(false, null, null, null));
-          }
-          static get EMPTY() {
-            return (0, _util.shadow)(this, "EMPTY", new HTMLResult(true, null, null, null));
-          }
-          constructor(success, html, bbox, breakNode) {
-            this.success = success;
-            this.html = html;
-            this.bbox = bbox;
-            this.breakNode = breakNode;
-          }
-          isBreak() {
-            return !!this.breakNode;
-          }
-          static breakNode(node) {
-            return new HTMLResult(false, null, null, node);
-          }
-          static success(html, bbox = null) {
-            return new HTMLResult(true, html, bbox, null);
-          }
-        }
-        exports.HTMLResult = HTMLResult;
-
-        /***/
-}),
-/* 80 */
-/***/ ((__unused_webpack_module, exports) => {
-
-
-
-        Object.defineProperty(exports, "__esModule", ({
-          value: true
-        }));
-        exports.NamespaceIds = exports.$buildXFAObject = void 0;
-        const $buildXFAObject = Symbol();
-        exports.$buildXFAObject = $buildXFAObject;
-        const NamespaceIds = {
-          config: {
-            id: 0,
-            check: ns => ns.startsWith("http://www.xfa.org/schema/xci/")
-          },
-          connectionSet: {
-            id: 1,
-            check: ns => ns.startsWith("http://www.xfa.org/schema/xfa-connection-set/")
-          },
-          datasets: {
-            id: 2,
-            check: ns => ns.startsWith("http://www.xfa.org/schema/xfa-data/")
-          },
-          form: {
-            id: 3,
-            check: ns => ns.startsWith("http://www.xfa.org/schema/xfa-form/")
-          },
-          localeSet: {
-            id: 4,
-            check: ns => ns.startsWith("http://www.xfa.org/schema/xfa-locale-set/")
-          },
-          pdf: {
-            id: 5,
-            check: ns => ns === "http://ns.adobe.com/xdp/pdf/"
-          },
-          signature: {
-            id: 6,
-            check: ns => ns === "http://www.w3.org/2000/09/xmldsig#"
-          },
-          sourceSet: {
-            id: 7,
-            check: ns => ns.startsWith("http://www.xfa.org/schema/xfa-source-set/")
-          },
-          stylesheet: {
-            id: 8,
-            check: ns => ns === "http://www.w3.org/1999/XSL/Transform"
-          },
-          template: {
-            id: 9,
-            check: ns => ns.startsWith("http://www.xfa.org/schema/xfa-template/")
-          },
-          xdc: {
-            id: 10,
-            check: ns => ns.startsWith("http://www.xfa.org/schema/xdc/")
-          },
-          xdp: {
-            id: 11,
-            check: ns => ns === "http://ns.adobe.com/xdp/"
-          },
-          xfdf: {
-            id: 12,
-            check: ns => ns === "http://ns.adobe.com/xfdf/"
-          },
-          xhtml: {
-            id: 13,
-            check: ns => ns === "http://www.w3.org/1999/xhtml"
-          },
-          xmpmeta: {
-            id: 14,
-            check: ns => ns === "http://ns.adobe.com/xmpmeta/"
-          }
-        };
-        exports.NamespaceIds = NamespaceIds;
-
-        /***/
-}),
-/* 81 */
-/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
-
-
-
-        Object.defineProperty(exports, "__esModule", ({
-          value: true
-        }));
-        exports.createDataNode = createDataNode;
-        exports.searchNode = searchNode;
-        var _xfa_object = __w_pdfjs_require__(78);
-        var _namespaces = __w_pdfjs_require__(80);
-        var _util = __w_pdfjs_require__(2);
-        const namePattern = /^[^.[]+/;
-        const indexPattern = /^[^\]]+/;
-        const operators = {
-          dot: 0,
-          dotDot: 1,
-          dotHash: 2,
-          dotBracket: 3,
-          dotParen: 4
-        };
-        const shortcuts = new Map([["$data", (root, current) => root.datasets ? root.datasets.data : root], ["$record", (root, current) => (root.datasets ? root.datasets.data : root)[_xfa_object.$getChildren]()[0]], ["$template", (root, current) => root.template], ["$connectionSet", (root, current) => root.connectionSet], ["$form", (root, current) => root.form], ["$layout", (root, current) => root.layout], ["$host", (root, current) => root.host], ["$dataWindow", (root, current) => root.dataWindow], ["$event", (root, current) => root.event], ["!", (root, current) => root.datasets], ["$xfa", (root, current) => root], ["xfa", (root, current) => root], ["$", (root, current) => current]]);
-        const somCache = new WeakMap();
-        const NS_DATASETS = _namespaces.NamespaceIds.datasets.id;
-        function parseIndex(index) {
-          index = index.trim();
-          if (index === "*") {
-            return Infinity;
-          }
-          return parseInt(index, 10) || 0;
-        }
-        function parseExpression(expr, dotDotAllowed, noExpr = true) {
-          let match = expr.match(namePattern);
-          if (!match) {
-            return null;
-          }
-          let [name] = match;
-          const parsed = [{
-            name,
-            cacheName: "." + name,
-            index: 0,
-            js: null,
-            formCalc: null,
-            operator: operators.dot
-          }];
-          let pos = name.length;
-          while (pos < expr.length) {
-            const spos = pos;
-            const char = expr.charAt(pos++);
-            if (char === "[") {
-              match = expr.slice(pos).match(indexPattern);
-              if (!match) {
-                (0, _util.warn)("XFA - Invalid index in SOM expression");
-                return null;
-              }
-              parsed.at(-1).index = parseIndex(match[0]);
-              pos += match[0].length + 1;
-              continue;
-            }
-            let operator;
-            switch (expr.charAt(pos)) {
-              case ".":
-                if (!dotDotAllowed) {
-                  return null;
-                }
-                pos++;
-                operator = operators.dotDot;
-                break;
-              case "#":
-                pos++;
-                operator = operators.dotHash;
-                break;
-              case "[":
-                if (noExpr) {
-                  (0, _util.warn)("XFA - SOM expression contains a FormCalc subexpression which is not supported for now.");
-                  return null;
-                }
-                operator = operators.dotBracket;
-                break;
-              case "(":
-                if (noExpr) {
-                  (0, _util.warn)("XFA - SOM expression contains a JavaScript subexpression which is not supported for now.");
-                  return null;
-                }
-                operator = operators.dotParen;
-                break;
-              default:
-                operator = operators.dot;
-                break;
-            }
-            match = expr.slice(pos).match(namePattern);
-            if (!match) {
-              break;
-            }
-            [name] = match;
-            pos += name.length;
-            parsed.push({
-              name,
-              cacheName: expr.slice(spos, pos),
-              operator,
-              index: 0,
-              js: null,
-              formCalc: null
-            });
-          }
-          return parsed;
-        }
-        function searchNode(root, container, expr, dotDotAllowed = true, useCache = true) {
-          const parsed = parseExpression(expr, dotDotAllowed);
-          if (!parsed) {
-            return null;
-          }
-          const fn = shortcuts.get(parsed[0].name);
-          let i = 0;
-          let isQualified;
-          if (fn) {
-            isQualified = true;
-            root = [fn(root, container)];
-            i = 1;
-          } else {
-            isQualified = container === null;
-            root = [container || root];
-          }
-          for (let ii = parsed.length; i < ii; i++) {
-            const {
-              name,
-              cacheName,
-              operator,
-              index
-            } = parsed[i];
-            const nodes = [];
-            for (const node of root) {
-              if (!(node instanceof _xfa_object.XFAObject)) {
-                continue;
-              }
-              let children, cached;
-              if (useCache) {
-                cached = somCache.get(node);
-                if (!cached) {
-                  cached = new Map();
-                  somCache.set(node, cached);
-                }
-                children = cached.get(cacheName);
-              }
-              if (!children) {
-                switch (operator) {
-                  case operators.dot:
-                    children = node[_xfa_object.$getChildrenByName](name, false);
-                    break;
-                  case operators.dotDot:
-                    children = node[_xfa_object.$getChildrenByName](name, true);
-                    break;
-                  case operators.dotHash:
-                    children = node[_xfa_object.$getChildrenByClass](name);
-                    if (children instanceof _xfa_object.XFAObjectArray) {
-                      children = children.children;
-                    } else {
-                      children = [children];
-                    }
-                    break;
-                  default:
-                    break;
-                }
-                if (useCache) {
-                  cached.set(cacheName, children);
-                }
-              }
-              if (children.length > 0) {
-                nodes.push(children);
-              }
-            }
-            if (nodes.length === 0 && !isQualified && i === 0) {
-              const parent = container[_xfa_object.$getParent]();
-              container = parent;
-              if (!container) {
-                return null;
-              }
-              i = -1;
-              root = [container];
-              continue;
-            }
-            if (isFinite(index)) {
-              root = nodes.filter(node => index < node.length).map(node => node[index]);
-            } else {
-              root = nodes.flat();
-            }
-          }
-          if (root.length === 0) {
-            return null;
-          }
-          return root;
-        }
-        function createNodes(root, path) {
-          let node = null;
-          for (const {
-            name,
-            index
-          } of path) {
-            for (let i = 0, ii = !isFinite(index) ? 0 : index; i <= ii; i++) {
-              const nsId = root[_xfa_object.$namespaceId] === NS_DATASETS ? -1 : root[_xfa_object.$namespaceId];
-              node = new _xfa_object.XmlObject(nsId, name);
-              root[_xfa_object.$appendChild](node);
-            }
-            root = node;
-          }
-          return node;
-        }
-        function createDataNode(root, container, expr) {
-          const parsed = parseExpression(expr);
-          if (!parsed) {
-            return null;
-          }
-          if (parsed.some(x => x.operator === operators.dotDot)) {
-            return null;
-          }
-          const fn = shortcuts.get(parsed[0].name);
-          let i = 0;
-          if (fn) {
-            root = fn(root, container);
-            i = 1;
-          } else {
-            root = container || root;
-          }
-          for (let ii = parsed.length; i < ii; i++) {
-            const {
-              name,
-              operator,
-              index
-            } = parsed[i];
-            if (!isFinite(index)) {
-              parsed[i].index = 0;
-              return createNodes(root, parsed.slice(i));
-            }
-            let children;
-            switch (operator) {
-              case operators.dot:
-                children = root[_xfa_object.$getChildrenByName](name, false);
-                break;
-              case operators.dotDot:
-                children = root[_xfa_object.$getChildrenByName](name, true);
-                break;
-              case operators.dotHash:
-                children = root[_xfa_object.$getChildrenByClass](name);
-                if (children instanceof _xfa_object.XFAObjectArray) {
-                  children = children.children;
-                } else {
-                  children = [children];
-                }
-                break;
-              default:
-                break;
-            }
-            if (children.length === 0) {
-              return createNodes(root, parsed.slice(i));
-            }
-            if (index < children.length) {
-              const child = children[index];
-              if (!(child instanceof _xfa_object.XFAObject)) {
-                (0, _util.warn)(`XFA - Cannot create a node.`);
-                return null;
-              }
-              root = child;
-            } else {
-              parsed[i].index = index - children.length;
-              return createNodes(root, parsed.slice(i));
-            }
-          }
-          return null;
-        }
-
-        /***/
-}),
-/* 82 */
-/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
-
-
-
-        Object.defineProperty(exports, "__esModule", ({
-          value: true
-        }));
         exports.Binder = void 0;
-        var _xfa_object = __w_pdfjs_require__(78);
-        var _template = __w_pdfjs_require__(83);
-        var _som = __w_pdfjs_require__(81);
-        var _namespaces = __w_pdfjs_require__(80);
+        var _symbol_utils = __w_pdfjs_require__(78);
+        var _template = __w_pdfjs_require__(80);
+        var _som = __w_pdfjs_require__(88);
+        var _xfa_object = __w_pdfjs_require__(87);
+        var _namespaces = __w_pdfjs_require__(81);
         var _util = __w_pdfjs_require__(2);
         const NS_DATASETS = _namespaces.NamespaceIds.datasets.id;
         function createText(content) {
           const node = new _template.Text({});
-          node[_xfa_object.$content] = content;
+          node[_symbol_utils.$content] = content;
           return node;
         }
         class Binder {
           constructor(root) {
             this.root = root;
             this.datasets = root.datasets;
-            if (root.datasets?.data) {
-              this.data = root.datasets.data;
-            } else {
-              this.data = new _xfa_object.XmlObject(_namespaces.NamespaceIds.datasets.id, "data");
-            }
-            this.emptyMerge = this.data[_xfa_object.$getChildren]().length === 0;
-            this.root.form = this.form = root.template[_xfa_object.$clone]();
+            this.data = root.datasets?.data || new _xfa_object.XmlObject(_namespaces.NamespaceIds.datasets.id, "data");
+            this.emptyMerge = this.data[_symbol_utils.$getChildren]().length === 0;
+            this.root.form = this.form = root.template[_symbol_utils.$clone]();
           }
           _isConsumeData() {
             return !this.emptyMerge && this._mergeMode;
@@ -47452,18 +46355,18 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             return this.data;
           }
           _bindValue(formNode, data, picture) {
-            formNode[_xfa_object.$data] = data;
-            if (formNode[_xfa_object.$hasSettableValue]()) {
-              if (data[_xfa_object.$isDataValue]()) {
-                const value = data[_xfa_object.$getDataValue]();
-                formNode[_xfa_object.$setValue](createText(value));
+            formNode[_symbol_utils.$data] = data;
+            if (formNode[_symbol_utils.$hasSettableValue]()) {
+              if (data[_symbol_utils.$isDataValue]()) {
+                const value = data[_symbol_utils.$getDataValue]();
+                formNode[_symbol_utils.$setValue](createText(value));
               } else if (formNode instanceof _template.Field && formNode.ui?.choiceList?.open === "multiSelect") {
-                const value = data[_xfa_object.$getChildren]().map(child => child[_xfa_object.$content].trim()).join("\n");
-                formNode[_xfa_object.$setValue](createText(value));
+                const value = data[_symbol_utils.$getChildren]().map(child => child[_symbol_utils.$content].trim()).join("\n");
+                formNode[_symbol_utils.$setValue](createText(value));
               } else if (this._isConsumeData()) {
                 (0, _util.warn)(`XFA - Nodes haven't the same type.`);
               }
-            } else if (!data[_xfa_object.$isDataValue]() || this._isMatchTemplate()) {
+            } else if (!data[_symbol_utils.$isDataValue]() || this._isMatchTemplate()) {
               this._bindElement(formNode, data);
             } else {
               (0, _util.warn)(`XFA - Nodes haven't the same type.`);
@@ -47475,32 +46378,32 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             }
             let generator, match;
             for (let i = 0; i < 3; i++) {
-              generator = dataNode[_xfa_object.$getRealChildrenByNameIt](name, false, true);
+              generator = dataNode[_symbol_utils.$getRealChildrenByNameIt](name, false, true);
               while (true) {
                 match = generator.next().value;
                 if (!match) {
                   break;
                 }
-                if (isValue === match[_xfa_object.$isDataValue]()) {
+                if (isValue === match[_symbol_utils.$isDataValue]()) {
                   return match;
                 }
               }
-              if (dataNode[_xfa_object.$namespaceId] === _namespaces.NamespaceIds.datasets.id && dataNode[_xfa_object.$nodeName] === "data") {
+              if (dataNode[_symbol_utils.$namespaceId] === _namespaces.NamespaceIds.datasets.id && dataNode[_symbol_utils.$nodeName] === "data") {
                 break;
               }
-              dataNode = dataNode[_xfa_object.$getParent]();
+              dataNode = dataNode[_symbol_utils.$getParent]();
             }
             if (!global) {
               return null;
             }
-            generator = this.data[_xfa_object.$getRealChildrenByNameIt](name, true, false);
+            generator = this.data[_symbol_utils.$getRealChildrenByNameIt](name, true, false);
             match = generator.next().value;
             if (match) {
               return match;
             }
-            generator = this.data[_xfa_object.$getAttributeIt](name, true);
+            generator = this.data[_symbol_utils.$getAttributeIt](name, true);
             match = generator.next().value;
-            if (match?.[_xfa_object.$isDataValue]()) {
+            if (match?.[_symbol_utils.$isDataValue]()) {
               return match;
             }
             return null;
@@ -47526,7 +46429,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 continue;
               }
               const [node] = nodes;
-              if (!node[_xfa_object.$isDescendent](this.data)) {
+              if (!node[_symbol_utils.$isDescendent](this.data)) {
                 (0, _util.warn)(`XFA - Invalid node: must be a data node.`);
                 continue;
               }
@@ -47536,11 +46439,11 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 continue;
               }
               const [targetNode] = targetNodes;
-              if (!targetNode[_xfa_object.$isDescendent](formNode)) {
+              if (!targetNode[_symbol_utils.$isDescendent](formNode)) {
                 (0, _util.warn)(`XFA - Invalid target: must be a property or subproperty.`);
                 continue;
               }
-              const targetParent = targetNode[_xfa_object.$getParent]();
+              const targetParent = targetNode[_symbol_utils.$getParent]();
               if (targetNode instanceof _template.SetProperty || targetParent instanceof _template.SetProperty) {
                 (0, _util.warn)(`XFA - Invalid target: cannot be a setProperty or one of its properties.`);
                 continue;
@@ -47549,8 +46452,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 (0, _util.warn)(`XFA - Invalid target: cannot be a bindItems or one of its properties.`);
                 continue;
               }
-              const content = node[_xfa_object.$text]();
-              const name = targetNode[_xfa_object.$nodeName];
+              const content = node[_symbol_utils.$text]();
+              const name = targetNode[_symbol_utils.$nodeName];
               if (targetNode instanceof _xfa_object.XFAAttribute) {
                 const attrs = Object.create(null);
                 attrs[name] = content;
@@ -47558,13 +46461,13 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 targetParent[name] = obj[name];
                 continue;
               }
-              if (!targetNode.hasOwnProperty(_xfa_object.$content)) {
+              if (!targetNode.hasOwnProperty(_symbol_utils.$content)) {
                 (0, _util.warn)(`XFA - Invalid node to use in setProperty`);
                 continue;
               }
-              targetNode[_xfa_object.$data] = node;
-              targetNode[_xfa_object.$content] = content;
-              targetNode[_xfa_object.$finalize]();
+              targetNode[_symbol_utils.$data] = node;
+              targetNode[_symbol_utils.$content] = content;
+              targetNode[_symbol_utils.$finalize]();
             }
           }
           _bindItems(formNode, dataNode) {
@@ -47572,14 +46475,14 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               return;
             }
             for (const item of formNode.items.children) {
-              formNode[_xfa_object.$removeChild](item);
+              formNode[_symbol_utils.$removeChild](item);
             }
             formNode.items.clear();
             const labels = new _template.Items({});
             const values = new _template.Items({});
-            formNode[_xfa_object.$appendChild](labels);
+            formNode[_symbol_utils.$appendChild](labels);
             formNode.items.push(labels);
-            formNode[_xfa_object.$appendChild](values);
+            formNode[_symbol_utils.$appendChild](values);
             formNode.items.push(values);
             for (const {
               ref,
@@ -47599,7 +46502,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 continue;
               }
               for (const node of nodes) {
-                if (!node[_xfa_object.$isDescendent](this.datasets)) {
+                if (!node[_symbol_utils.$isDescendent](this.datasets)) {
                   (0, _util.warn)(`XFA - Invalid ref (${ref}): must be a datasets child.`);
                   continue;
                 }
@@ -47609,7 +46512,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                   continue;
                 }
                 const [labelNode] = labelNodes;
-                if (!labelNode[_xfa_object.$isDescendent](this.datasets)) {
+                if (!labelNode[_symbol_utils.$isDescendent](this.datasets)) {
                   (0, _util.warn)(`XFA - Invalid label: must be a datasets child.`);
                   continue;
                 }
@@ -47619,15 +46522,15 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                   continue;
                 }
                 const [valueNode] = valueNodes;
-                if (!valueNode[_xfa_object.$isDescendent](this.datasets)) {
+                if (!valueNode[_symbol_utils.$isDescendent](this.datasets)) {
                   (0, _util.warn)(`XFA - Invalid value: must be a datasets child.`);
                   continue;
                 }
-                const label = createText(labelNode[_xfa_object.$text]());
-                const value = createText(valueNode[_xfa_object.$text]());
-                labels[_xfa_object.$appendChild](label);
+                const label = createText(labelNode[_symbol_utils.$text]());
+                const value = createText(valueNode[_symbol_utils.$text]());
+                labels[_symbol_utils.$appendChild](label);
                 labels.text.push(label);
-                values[_xfa_object.$appendChild](value);
+                values[_symbol_utils.$appendChild](value);
                 values.text.push(value);
               }
             }
@@ -47635,8 +46538,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           _bindOccurrences(formNode, matches, picture) {
             let baseClone;
             if (matches.length > 1) {
-              baseClone = formNode[_xfa_object.$clone]();
-              baseClone[_xfa_object.$removeChild](baseClone.occur);
+              baseClone = formNode[_symbol_utils.$clone]();
+              baseClone[_symbol_utils.$removeChild](baseClone.occur);
               baseClone.occur = null;
             }
             this._bindValue(formNode, matches[0], picture);
@@ -47645,14 +46548,14 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             if (matches.length === 1) {
               return;
             }
-            const parent = formNode[_xfa_object.$getParent]();
-            const name = formNode[_xfa_object.$nodeName];
-            const pos = parent[_xfa_object.$indexOf](formNode);
+            const parent = formNode[_symbol_utils.$getParent]();
+            const name = formNode[_symbol_utils.$nodeName];
+            const pos = parent[_symbol_utils.$indexOf](formNode);
             for (let i = 1, ii = matches.length; i < ii; i++) {
               const match = matches[i];
-              const clone = baseClone[_xfa_object.$clone]();
+              const clone = baseClone[_symbol_utils.$clone]();
               parent[name].push(clone);
-              parent[_xfa_object.$insertAt](pos + i, clone);
+              parent[_symbol_utils.$insertAt](pos + i, clone);
               this._bindValue(clone, match, picture);
               this._setProperties(clone, match);
               this._bindItems(clone, match);
@@ -47668,8 +46571,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             if (!occur || occur.initial <= 1) {
               return;
             }
-            const parent = formNode[_xfa_object.$getParent]();
-            const name = formNode[_xfa_object.$nodeName];
+            const parent = formNode[_symbol_utils.$getParent]();
+            const name = formNode[_symbol_utils.$nodeName];
             if (!(parent[name] instanceof _xfa_object.XFAObjectArray)) {
               return;
             }
@@ -47679,18 +46582,18 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             } else {
               currentNumber = parent[name].children.length;
             }
-            const pos = parent[_xfa_object.$indexOf](formNode) + 1;
+            const pos = parent[_symbol_utils.$indexOf](formNode) + 1;
             const ii = occur.initial - currentNumber;
             if (ii) {
-              const nodeClone = formNode[_xfa_object.$clone]();
-              nodeClone[_xfa_object.$removeChild](nodeClone.occur);
+              const nodeClone = formNode[_symbol_utils.$clone]();
+              nodeClone[_symbol_utils.$removeChild](nodeClone.occur);
               nodeClone.occur = null;
               parent[name].push(nodeClone);
-              parent[_xfa_object.$insertAt](pos, nodeClone);
+              parent[_symbol_utils.$insertAt](pos, nodeClone);
               for (let i = 1; i < ii; i++) {
-                const clone = nodeClone[_xfa_object.$clone]();
+                const clone = nodeClone[_symbol_utils.$clone]();
                 parent[name].push(clone);
-                parent[_xfa_object.$insertAt](pos + i, clone);
+                parent[_symbol_utils.$insertAt](pos + i, clone);
               }
             }
           }
@@ -47713,24 +46616,24 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           _bindElement(formNode, dataNode) {
             const uselessNodes = [];
             this._createOccurrences(formNode);
-            for (const child of formNode[_xfa_object.$getChildren]()) {
-              if (child[_xfa_object.$data]) {
+            for (const child of formNode[_symbol_utils.$getChildren]()) {
+              if (child[_symbol_utils.$data]) {
                 continue;
               }
-              if (this._mergeMode === undefined && child[_xfa_object.$nodeName] === "subform") {
+              if (this._mergeMode === undefined && child[_symbol_utils.$nodeName] === "subform") {
                 this._mergeMode = child.mergeMode === "consumeData";
-                const dataChildren = dataNode[_xfa_object.$getChildren]();
+                const dataChildren = dataNode[_symbol_utils.$getChildren]();
                 if (dataChildren.length > 0) {
                   this._bindOccurrences(child, [dataChildren[0]], null);
                 } else if (this.emptyMerge) {
-                  const nsId = dataNode[_xfa_object.$namespaceId] === NS_DATASETS ? -1 : dataNode[_xfa_object.$namespaceId];
-                  const dataChild = child[_xfa_object.$data] = new _xfa_object.XmlObject(nsId, child.name || "root");
-                  dataNode[_xfa_object.$appendChild](dataChild);
+                  const nsId = dataNode[_symbol_utils.$namespaceId] === NS_DATASETS ? -1 : dataNode[_symbol_utils.$namespaceId];
+                  const dataChild = child[_symbol_utils.$data] = new _xfa_object.XmlObject(nsId, child.name || "root");
+                  dataNode[_symbol_utils.$appendChild](dataChild);
                   this._bindElement(child, dataChild);
                 }
                 continue;
               }
-              if (!child[_xfa_object.$isBindable]()) {
+              if (!child[_symbol_utils.$isBindable]()) {
                 continue;
               }
               let global = false;
@@ -47747,7 +46650,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                     break;
                   case "dataRef":
                     if (!child.bind.ref) {
-                      (0, _util.warn)(`XFA - ref is empty in node ${child[_xfa_object.$nodeName]}.`);
+                      (0, _util.warn)(`XFA - ref is empty in node ${child[_symbol_utils.$nodeName]}.`);
                       this._setAndBind(child, dataNode);
                       continue;
                     }
@@ -47757,7 +46660,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                     break;
                 }
                 if (child.bind.picture) {
-                  picture = child.bind.picture[_xfa_object.$content];
+                  picture = child.bind.picture[_symbol_utils.$content];
                 }
               }
               const [min, max] = this._getOccurInfo(child);
@@ -47769,13 +46672,13 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                     continue;
                   }
                   if (this._isConsumeData()) {
-                    match[_xfa_object.$consumed] = true;
+                    match[_symbol_utils.$consumed] = true;
                   }
                   this._setAndBind(child, match);
                   continue;
                 } else {
                   if (this._isConsumeData()) {
-                    match = match.filter(node => !node[_xfa_object.$consumed]);
+                    match = match.filter(node => !node[_symbol_utils.$consumed]);
                   }
                   if (match.length > max) {
                     match = match.slice(0, max);
@@ -47784,7 +46687,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                   }
                   if (match && this._isConsumeData()) {
                     match.forEach(node => {
-                      node[_xfa_object.$consumed] = true;
+                      node[_symbol_utils.$consumed] = true;
                     });
                   }
                 }
@@ -47796,32 +46699,32 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 if (this._isConsumeData()) {
                   const matches = [];
                   while (matches.length < max) {
-                    const found = this._findDataByNameToConsume(child.name, child[_xfa_object.$hasSettableValue](), dataNode, global);
+                    const found = this._findDataByNameToConsume(child.name, child[_symbol_utils.$hasSettableValue](), dataNode, global);
                     if (!found) {
                       break;
                     }
-                    found[_xfa_object.$consumed] = true;
+                    found[_symbol_utils.$consumed] = true;
                     matches.push(found);
                   }
                   match = matches.length > 0 ? matches : null;
                 } else {
-                  match = dataNode[_xfa_object.$getRealChildrenByNameIt](child.name, false, this.emptyMerge).next().value;
+                  match = dataNode[_symbol_utils.$getRealChildrenByNameIt](child.name, false, this.emptyMerge).next().value;
                   if (!match) {
                     if (min === 0) {
                       uselessNodes.push(child);
                       continue;
                     }
-                    const nsId = dataNode[_xfa_object.$namespaceId] === NS_DATASETS ? -1 : dataNode[_xfa_object.$namespaceId];
-                    match = child[_xfa_object.$data] = new _xfa_object.XmlObject(nsId, child.name);
+                    const nsId = dataNode[_symbol_utils.$namespaceId] === NS_DATASETS ? -1 : dataNode[_symbol_utils.$namespaceId];
+                    match = child[_symbol_utils.$data] = new _xfa_object.XmlObject(nsId, child.name);
                     if (this.emptyMerge) {
-                      match[_xfa_object.$consumed] = true;
+                      match[_symbol_utils.$consumed] = true;
                     }
-                    dataNode[_xfa_object.$appendChild](match);
+                    dataNode[_symbol_utils.$appendChild](match);
                     this._setAndBind(child, match);
                     continue;
                   }
                   if (this.emptyMerge) {
-                    match[_xfa_object.$consumed] = true;
+                    match[_symbol_utils.$consumed] = true;
                   }
                   match = [match];
                 }
@@ -47834,14 +46737,14 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 uselessNodes.push(child);
               }
             }
-            uselessNodes.forEach(node => node[_xfa_object.$getParent]()[_xfa_object.$removeChild](node));
+            uselessNodes.forEach(node => node[_symbol_utils.$getParent]()[_symbol_utils.$removeChild](node));
           }
         }
         exports.Binder = Binder;
 
         /***/
 }),
-/* 83 */
+/* 80 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -47850,15 +46753,16 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           value: true
         }));
         exports.Value = exports.Text = exports.TemplateNamespace = exports.Template = exports.SetProperty = exports.Items = exports.Field = exports.BindItems = void 0;
-        var _xfa_object = __w_pdfjs_require__(78);
-        var _namespaces = __w_pdfjs_require__(80);
-        var _layout = __w_pdfjs_require__(84);
-        var _html_utils = __w_pdfjs_require__(85);
-        var _utils = __w_pdfjs_require__(79);
+        var _symbol_utils = __w_pdfjs_require__(78);
+        var _namespaces = __w_pdfjs_require__(81);
+        var _layout = __w_pdfjs_require__(82);
+        var _html_utils = __w_pdfjs_require__(83);
+        var _xfa_object = __w_pdfjs_require__(87);
+        var _utils = __w_pdfjs_require__(84);
         var _util = __w_pdfjs_require__(2);
-        var _fonts = __w_pdfjs_require__(86);
+        var _fonts = __w_pdfjs_require__(85);
         var _core_utils = __w_pdfjs_require__(3);
-        var _som = __w_pdfjs_require__(81);
+        var _som = __w_pdfjs_require__(88);
         const TEMPLATE_NS_ID = _namespaces.NamespaceIds.template.id;
         const SVG_NS = "http://www.w3.org/2000/svg";
         const MAX_ATTEMPTS_FOR_LRTB_LAYOUT = 2;
@@ -47874,7 +46778,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               h: 0
             };
           }
-          const borderExtra = node.border[_xfa_object.$getExtra]();
+          const borderExtra = node.border[_symbol_utils.$getExtra]();
           if (!borderExtra) {
             return {
               w: 0,
@@ -47892,15 +46796,15 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
         function _setValue(templateNode, value) {
           if (!templateNode.value) {
             const nodeValue = new Value({});
-            templateNode[_xfa_object.$appendChild](nodeValue);
+            templateNode[_symbol_utils.$appendChild](nodeValue);
             templateNode.value = nodeValue;
           }
-          templateNode.value[_xfa_object.$setValue](value);
+          templateNode.value[_symbol_utils.$setValue](value);
         }
         function* getContainedChildren(node) {
-          for (const child of node[_xfa_object.$getChildren]()) {
+          for (const child of node[_symbol_utils.$getChildren]()) {
             if (child instanceof SubformSet) {
-              yield* child[_xfa_object.$getContainedChildren]();
+              yield* child[_symbol_utils.$getContainedChildren]();
               continue;
             }
             yield child;
@@ -47912,26 +46816,26 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
         function setTabIndex(node) {
           while (node) {
             if (!node.traversal) {
-              node[_xfa_object.$tabIndex] = node[_xfa_object.$getParent]()[_xfa_object.$tabIndex];
+              node[_symbol_utils.$tabIndex] = node[_symbol_utils.$getParent]()[_symbol_utils.$tabIndex];
               return;
             }
-            if (node[_xfa_object.$tabIndex]) {
+            if (node[_symbol_utils.$tabIndex]) {
               return;
             }
             let next = null;
-            for (const child of node.traversal[_xfa_object.$getChildren]()) {
+            for (const child of node.traversal[_symbol_utils.$getChildren]()) {
               if (child.operation === "next") {
                 next = child;
                 break;
               }
             }
             if (!next || !next.ref) {
-              node[_xfa_object.$tabIndex] = node[_xfa_object.$getParent]()[_xfa_object.$tabIndex];
+              node[_symbol_utils.$tabIndex] = node[_symbol_utils.$getParent]()[_symbol_utils.$tabIndex];
               return;
             }
-            const root = node[_xfa_object.$getTemplateRoot]();
-            node[_xfa_object.$tabIndex] = ++root[_xfa_object.$tabIndex];
-            const ref = root[_xfa_object.$searchNode](next.ref, node);
+            const root = node[_symbol_utils.$getTemplateRoot]();
+            node[_symbol_utils.$tabIndex] = ++root[_symbol_utils.$tabIndex];
+            const ref = root[_symbol_utils.$searchNode](next.ref, node);
             if (!ref) {
               return;
             }
@@ -47941,7 +46845,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
         function applyAssist(obj, attributes) {
           const assist = obj.assist;
           if (assist) {
-            const assistTitle = assist[_xfa_object.$toHTML]();
+            const assistTitle = assist[_symbol_utils.$toHTML]();
             if (assistTitle) {
               attributes.title = assistTitle;
             }
@@ -47959,13 +46863,9 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           } else if (obj.layout === "row") {
             attributes.role = "row";
           } else {
-            const parent = obj[_xfa_object.$getParent]();
+            const parent = obj[_symbol_utils.$getParent]();
             if (parent.layout === "row") {
-              if (parent.assist?.role === "TH") {
-                attributes.role = "columnheader";
-              } else {
-                attributes.role = "cell";
-              }
+              attributes.role = parent.assist?.role === "TH" ? "columnheader" : "cell";
             }
           }
         }
@@ -47974,11 +46874,11 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             return null;
           }
           const assist = obj.assist;
-          if (assist.speak && assist.speak[_xfa_object.$content] !== "") {
-            return assist.speak[_xfa_object.$content];
+          if (assist.speak && assist.speak[_symbol_utils.$content] !== "") {
+            return assist.speak[_symbol_utils.$content];
           }
           if (assist.toolTip) {
-            return assist.toolTip[_xfa_object.$content];
+            return assist.toolTip[_symbol_utils.$content];
           }
           return null;
         }
@@ -47999,30 +46899,30 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           });
         }
         function setFirstUnsplittable(node) {
-          const root = node[_xfa_object.$getTemplateRoot]();
-          if (root[_xfa_object.$extra].firstUnsplittable === null) {
-            root[_xfa_object.$extra].firstUnsplittable = node;
-            root[_xfa_object.$extra].noLayoutFailure = true;
+          const root = node[_symbol_utils.$getTemplateRoot]();
+          if (root[_symbol_utils.$extra].firstUnsplittable === null) {
+            root[_symbol_utils.$extra].firstUnsplittable = node;
+            root[_symbol_utils.$extra].noLayoutFailure = true;
           }
         }
         function unsetFirstUnsplittable(node) {
-          const root = node[_xfa_object.$getTemplateRoot]();
-          if (root[_xfa_object.$extra].firstUnsplittable === node) {
-            root[_xfa_object.$extra].noLayoutFailure = false;
+          const root = node[_symbol_utils.$getTemplateRoot]();
+          if (root[_symbol_utils.$extra].firstUnsplittable === node) {
+            root[_symbol_utils.$extra].noLayoutFailure = false;
           }
         }
         function handleBreak(node) {
-          if (node[_xfa_object.$extra]) {
+          if (node[_symbol_utils.$extra]) {
             return false;
           }
-          node[_xfa_object.$extra] = Object.create(null);
+          node[_symbol_utils.$extra] = Object.create(null);
           if (node.targetType === "auto") {
             return false;
           }
-          const root = node[_xfa_object.$getTemplateRoot]();
+          const root = node[_symbol_utils.$getTemplateRoot]();
           let target = null;
           if (node.target) {
-            target = root[_xfa_object.$searchNode](node.target, node[_xfa_object.$getParent]());
+            target = root[_symbol_utils.$searchNode](node.target, node[_symbol_utils.$getParent]());
             if (!target) {
               return false;
             }
@@ -48031,16 +46931,16 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           const {
             currentPageArea,
             currentContentArea
-          } = root[_xfa_object.$extra];
+          } = root[_symbol_utils.$extra];
           if (node.targetType === "pageArea") {
             if (!(target instanceof PageArea)) {
               target = null;
             }
             if (node.startNew) {
-              node[_xfa_object.$extra].target = target || currentPageArea;
+              node[_symbol_utils.$extra].target = target || currentPageArea;
               return true;
             } else if (target && target !== currentPageArea) {
-              node[_xfa_object.$extra].target = target;
+              node[_symbol_utils.$extra].target = target;
               return true;
             }
             return false;
@@ -48048,7 +46948,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           if (!(target instanceof ContentArea)) {
             target = null;
           }
-          const pageArea = target && target[_xfa_object.$getParent]();
+          const pageArea = target && target[_symbol_utils.$getParent]();
           let index;
           let nextPageArea = pageArea;
           if (node.startNew) {
@@ -48070,20 +46970,20 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           } else {
             return false;
           }
-          node[_xfa_object.$extra].target = nextPageArea;
-          node[_xfa_object.$extra].index = index;
+          node[_symbol_utils.$extra].target = nextPageArea;
+          node[_symbol_utils.$extra].index = index;
           return true;
         }
         function handleOverflow(node, extraNode, space) {
-          const root = node[_xfa_object.$getTemplateRoot]();
-          const saved = root[_xfa_object.$extra].noLayoutFailure;
-          const savedMethod = extraNode[_xfa_object.$getSubformParent];
-          extraNode[_xfa_object.$getSubformParent] = () => node;
-          root[_xfa_object.$extra].noLayoutFailure = true;
-          const res = extraNode[_xfa_object.$toHTML](space);
-          node[_xfa_object.$addHTML](res.html, res.bbox);
-          root[_xfa_object.$extra].noLayoutFailure = saved;
-          extraNode[_xfa_object.$getSubformParent] = savedMethod;
+          const root = node[_symbol_utils.$getTemplateRoot]();
+          const saved = root[_symbol_utils.$extra].noLayoutFailure;
+          const savedMethod = extraNode[_symbol_utils.$getSubformParent];
+          extraNode[_symbol_utils.$getSubformParent] = () => node;
+          root[_symbol_utils.$extra].noLayoutFailure = true;
+          const res = extraNode[_symbol_utils.$toHTML](space);
+          node[_symbol_utils.$addHTML](res.html, res.bbox);
+          root[_symbol_utils.$extra].noLayoutFailure = saved;
+          extraNode[_symbol_utils.$getSubformParent] = savedMethod;
         }
         class AppearanceFilter extends _xfa_object.StringObject {
           constructor(attributes) {
@@ -48119,12 +47019,12 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.edge = null;
             this.fill = null;
           }
-          [_xfa_object.$toHTML]() {
+          [_symbol_utils.$toHTML]() {
             const edge = this.edge || new Edge({});
-            const edgeStyle = edge[_xfa_object.$toStyle]();
+            const edgeStyle = edge[_symbol_utils.$toStyle]();
             const style = Object.create(null);
             if (this.fill?.presence === "visible") {
-              Object.assign(style, this.fill[_xfa_object.$toStyle]());
+              Object.assign(style, this.fill[_symbol_utils.$toStyle]());
             } else {
               style.fill = "transparent";
             }
@@ -48175,7 +47075,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               children: [arc],
               attributes
             };
-            const parent = this[_xfa_object.$getParent]()[_xfa_object.$getParent]();
+            const parent = this[_symbol_utils.$getParent]()[_symbol_utils.$getParent]();
             if (hasMargin(parent)) {
               return _utils.HTMLResult.success({
                 name: "div",
@@ -48218,29 +47118,29 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.subform = new _xfa_object.XFAObjectArray();
             this.subformSet = new _xfa_object.XFAObjectArray();
           }
-          *[_xfa_object.$getContainedChildren]() {
+          *[_symbol_utils.$getContainedChildren]() {
             yield* getContainedChildren(this);
           }
-          [_xfa_object.$isTransparent]() {
+          [_symbol_utils.$isTransparent]() {
             return true;
           }
-          [_xfa_object.$isBindable]() {
+          [_symbol_utils.$isBindable]() {
             return true;
           }
-          [_xfa_object.$addHTML](html, bbox) {
+          [_symbol_utils.$addHTML](html, bbox) {
             const [x, y, w, h] = bbox;
-            this[_xfa_object.$extra].width = Math.max(this[_xfa_object.$extra].width, x + w);
-            this[_xfa_object.$extra].height = Math.max(this[_xfa_object.$extra].height, y + h);
-            this[_xfa_object.$extra].children.push(html);
+            this[_symbol_utils.$extra].width = Math.max(this[_symbol_utils.$extra].width, x + w);
+            this[_symbol_utils.$extra].height = Math.max(this[_symbol_utils.$extra].height, y + h);
+            this[_symbol_utils.$extra].children.push(html);
           }
-          [_xfa_object.$getAvailableSpace]() {
-            return this[_xfa_object.$extra].availableSpace;
+          [_symbol_utils.$getAvailableSpace]() {
+            return this[_symbol_utils.$extra].availableSpace;
           }
-          [_xfa_object.$toHTML](availableSpace) {
+          [_symbol_utils.$toHTML](availableSpace) {
             const style = (0, _html_utils.toStyle)(this, "position");
             const attributes = {
               style,
-              id: this[_xfa_object.$uid],
+              id: this[_symbol_utils.$uid],
               class: ["xfaArea"]
             };
             if ((0, _html_utils.isPrintOnly)(this)) {
@@ -48250,13 +47150,13 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               attributes.xfaName = this.name;
             }
             const children = [];
-            this[_xfa_object.$extra] = {
+            this[_symbol_utils.$extra] = {
               children,
               width: 0,
               height: 0,
               availableSpace
             };
-            const result = this[_xfa_object.$childrenToHTML]({
+            const result = this[_symbol_utils.$childrenToHTML]({
               filter: new Set(["area", "draw", "field", "exclGroup", "subform", "subformSet"]),
               include: true
             });
@@ -48264,18 +47164,18 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               if (result.isBreak()) {
                 return result;
               }
-              delete this[_xfa_object.$extra];
+              delete this[_symbol_utils.$extra];
               return _utils.HTMLResult.FAILURE;
             }
-            style.width = (0, _html_utils.measureToString)(this[_xfa_object.$extra].width);
-            style.height = (0, _html_utils.measureToString)(this[_xfa_object.$extra].height);
+            style.width = (0, _html_utils.measureToString)(this[_symbol_utils.$extra].width);
+            style.height = (0, _html_utils.measureToString)(this[_symbol_utils.$extra].height);
             const html = {
               name: "div",
               attributes,
               children
             };
-            const bbox = [this.x, this.y, this[_xfa_object.$extra].width, this[_xfa_object.$extra].height];
-            delete this[_xfa_object.$extra];
+            const bbox = [this.x, this.y, this[_symbol_utils.$extra].width, this[_symbol_utils.$extra].height];
+            delete this[_symbol_utils.$extra];
             return _utils.HTMLResult.success(html, bbox);
           }
         }
@@ -48289,8 +47189,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.speak = null;
             this.toolTip = null;
           }
-          [_xfa_object.$toHTML]() {
-            return this.toolTip?.[_xfa_object.$content] || null;
+          [_symbol_utils.$toHTML]() {
+            return this.toolTip?.[_symbol_utils.$content] || null;
           }
         }
         class Barcode extends _xfa_object.XFAObject {
@@ -48385,8 +47285,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.use = attributes.use || "";
             this.usehref = attributes.usehref || "";
           }
-          [_xfa_object.$toHTML](availableSpace) {
-            return valueToHtml(this[_xfa_object.$content] === 1 ? "1" : "0");
+          [_symbol_utils.$toHTML](availableSpace) {
+            return valueToHtml(this[_symbol_utils.$content] === 1 ? "1" : "0");
           }
         }
         class Border extends _xfa_object.XFAObject {
@@ -48405,8 +47305,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.fill = null;
             this.margin = null;
           }
-          [_xfa_object.$getExtra]() {
-            if (!this[_xfa_object.$extra]) {
+          [_symbol_utils.$getExtra]() {
+            if (!this[_symbol_utils.$extra]) {
               const edges = this.edge.children.slice();
               if (edges.length < 4) {
                 const defaultEdge = edges.at(-1) || new Edge({});
@@ -48422,32 +47322,32 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 insets[2] = this.margin.bottomInset;
                 insets[3] = this.margin.leftInset;
               }
-              this[_xfa_object.$extra] = {
+              this[_symbol_utils.$extra] = {
                 widths,
                 insets,
                 edges
               };
             }
-            return this[_xfa_object.$extra];
+            return this[_symbol_utils.$extra];
           }
-          [_xfa_object.$toStyle]() {
+          [_symbol_utils.$toStyle]() {
             const {
               edges
-            } = this[_xfa_object.$getExtra]();
+            } = this[_symbol_utils.$getExtra]();
             const edgeStyles = edges.map(node => {
-              const style = node[_xfa_object.$toStyle]();
+              const style = node[_symbol_utils.$toStyle]();
               style.color ||= "#000000";
               return style;
             });
             const style = Object.create(null);
             if (this.margin) {
-              Object.assign(style, this.margin[_xfa_object.$toStyle]());
+              Object.assign(style, this.margin[_symbol_utils.$toStyle]());
             }
             if (this.fill?.presence === "visible") {
-              Object.assign(style, this.fill[_xfa_object.$toStyle]());
+              Object.assign(style, this.fill[_symbol_utils.$toStyle]());
             }
             if (this.corner.children.some(node => node.radius !== 0)) {
-              const cornerStyles = this.corner.children.map(node => node[_xfa_object.$toStyle]());
+              const cornerStyles = this.corner.children.map(node => node[_symbol_utils.$toStyle]());
               if (cornerStyles.length === 2 || cornerStyles.length === 3) {
                 const last = cornerStyles.at(-1);
                 for (let i = cornerStyles.length; i < 4; i++) {
@@ -48531,8 +47431,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.usehref = attributes.usehref || "";
             this.script = null;
           }
-          [_xfa_object.$toHTML](availableSpace) {
-            this[_xfa_object.$extra] = {};
+          [_symbol_utils.$toHTML](availableSpace) {
+            this[_symbol_utils.$extra] = {};
             return _utils.HTMLResult.FAILURE;
           }
         }
@@ -48545,13 +47445,13 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.usehref = attributes.usehref || "";
             this.extras = null;
           }
-          [_xfa_object.$toHTML](availableSpace) {
-            const parent = this[_xfa_object.$getParent]();
-            const grandpa = parent[_xfa_object.$getParent]();
+          [_symbol_utils.$toHTML](availableSpace) {
+            const parent = this[_symbol_utils.$getParent]();
+            const grandpa = parent[_symbol_utils.$getParent]();
             const htmlButton = {
               name: "button",
               attributes: {
-                id: this[_xfa_object.$uid],
+                id: this[_symbol_utils.$uid],
                 class: ["xfaButton"],
                 style: {}
               },
@@ -48561,7 +47461,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               if (event.activity !== "click" || !event.script) {
                 continue;
               }
-              const jsURL = (0, _core_utils.recoverJsURL)(event.script[_xfa_object.$content]);
+              const jsURL = (0, _core_utils.recoverJsURL)(event.script[_symbol_utils.$content]);
               if (!jsURL) {
                 continue;
               }
@@ -48572,7 +47472,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               htmlButton.children.push({
                 name: "a",
                 attributes: {
-                  id: "link" + this[_xfa_object.$uid],
+                  id: "link" + this[_symbol_utils.$uid],
                   href,
                   newWindow: jsURL.newWindow,
                   class: ["xfaLink"],
@@ -48611,11 +47511,11 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.para = null;
             this.value = null;
           }
-          [_xfa_object.$setValue](value) {
+          [_symbol_utils.$setValue](value) {
             _setValue(this, value);
           }
-          [_xfa_object.$getExtra](availableSpace) {
-            if (!this[_xfa_object.$extra]) {
+          [_symbol_utils.$getExtra](availableSpace) {
+            if (!this[_symbol_utils.$extra]) {
               let {
                 width,
                 height
@@ -48631,21 +47531,21 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                   height = this.reserve <= 0 ? height : this.reserve;
                   break;
               }
-              this[_xfa_object.$extra] = (0, _html_utils.layoutNode)(this, {
+              this[_symbol_utils.$extra] = (0, _html_utils.layoutNode)(this, {
                 width,
                 height
               });
             }
-            return this[_xfa_object.$extra];
+            return this[_symbol_utils.$extra];
           }
-          [_xfa_object.$toHTML](availableSpace) {
+          [_symbol_utils.$toHTML](availableSpace) {
             if (!this.value) {
               return _utils.HTMLResult.EMPTY;
             }
-            this[_xfa_object.$pushPara]();
-            const value = this.value[_xfa_object.$toHTML](availableSpace).html;
+            this[_symbol_utils.$pushPara]();
+            const value = this.value[_symbol_utils.$toHTML](availableSpace).html;
             if (!value) {
-              this[_xfa_object.$popPara]();
+              this[_symbol_utils.$popPara]();
               return _utils.HTMLResult.EMPTY;
             }
             const savedReserve = this.reserve;
@@ -48653,7 +47553,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               const {
                 w,
                 h
-              } = this[_xfa_object.$getExtra](availableSpace);
+              } = this[_symbol_utils.$getExtra](availableSpace);
               switch (this.placement) {
                 case "left":
                 case "right":
@@ -48691,7 +47591,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 break;
             }
             (0, _html_utils.setPara)(this, null, value);
-            this[_xfa_object.$popPara]();
+            this[_symbol_utils.$popPara]();
             this.reserve = savedReserve;
             return _utils.HTMLResult.success({
               name: "div",
@@ -48742,33 +47642,33 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.extras = null;
             this.margin = null;
           }
-          [_xfa_object.$toHTML](availableSpace) {
+          [_symbol_utils.$toHTML](availableSpace) {
             const style = (0, _html_utils.toStyle)("margin");
             const size = (0, _html_utils.measureToString)(this.size);
             style.width = style.height = size;
             let type;
             let className;
             let groupId;
-            const field = this[_xfa_object.$getParent]()[_xfa_object.$getParent]();
-            const items = field.items.children.length && field.items.children[0][_xfa_object.$toHTML]().html || [];
+            const field = this[_symbol_utils.$getParent]()[_symbol_utils.$getParent]();
+            const items = field.items.children.length && field.items.children[0][_symbol_utils.$toHTML]().html || [];
             const exportedValue = {
               on: (items[0] !== undefined ? items[0] : "on").toString(),
               off: (items[1] !== undefined ? items[1] : "off").toString()
             };
-            const value = field.value?.[_xfa_object.$text]() || "off";
+            const value = field.value?.[_symbol_utils.$text]() || "off";
             const checked = value === exportedValue.on || undefined;
-            const container = field[_xfa_object.$getSubformParent]();
-            const fieldId = field[_xfa_object.$uid];
+            const container = field[_symbol_utils.$getSubformParent]();
+            const fieldId = field[_symbol_utils.$uid];
             let dataId;
             if (container instanceof ExclGroup) {
-              groupId = container[_xfa_object.$uid];
+              groupId = container[_symbol_utils.$uid];
               type = "radio";
               className = "xfaRadio";
-              dataId = container[_xfa_object.$data]?.[_xfa_object.$uid] || container[_xfa_object.$uid];
+              dataId = container[_symbol_utils.$data]?.[_symbol_utils.$uid] || container[_symbol_utils.$uid];
             } else {
               type = "checkbox";
               className = "xfaCheckbox";
-              dataId = field[_xfa_object.$data]?.[_xfa_object.$uid] || field[_xfa_object.$uid];
+              dataId = field[_symbol_utils.$data]?.[_symbol_utils.$uid] || field[_symbol_utils.$uid];
             }
             const input = {
               name: "input",
@@ -48818,10 +47718,10 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.extras = null;
             this.margin = null;
           }
-          [_xfa_object.$toHTML](availableSpace) {
+          [_symbol_utils.$toHTML](availableSpace) {
             const style = (0, _html_utils.toStyle)(this, "border", "margin");
-            const ui = this[_xfa_object.$getParent]();
-            const field = ui[_xfa_object.$getParent]();
+            const ui = this[_symbol_utils.$getParent]();
+            const field = ui[_symbol_utils.$getParent]();
             const fontSize = field.font?.size || 10;
             const optionStyle = {
               fontSize: `calc(${fontSize}px * var(--scale-factor))`
@@ -48835,10 +47735,10 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 displayedIndex = items.children[0].save;
                 saveIndex = 1 - displayedIndex;
               }
-              const displayed = items.children[displayedIndex][_xfa_object.$toHTML]().html;
-              const values = items.children[saveIndex][_xfa_object.$toHTML]().html;
+              const displayed = items.children[displayedIndex][_symbol_utils.$toHTML]().html;
+              const values = items.children[saveIndex][_symbol_utils.$toHTML]().html;
               let selected = false;
-              const value = field.value?.[_xfa_object.$text]() || "";
+              const value = field.value?.[_symbol_utils.$text]() || "";
               for (let i = 0, ii = displayed.length; i < ii; i++) {
                 const option = {
                   name: "option",
@@ -48866,8 +47766,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             }
             const selectAttributes = {
               class: ["xfaSelect"],
-              fieldId: field[_xfa_object.$uid],
-              dataId: field[_xfa_object.$data]?.[_xfa_object.$uid] || field[_xfa_object.$uid],
+              fieldId: field[_symbol_utils.$uid],
+              dataId: field[_symbol_utils.$data]?.[_symbol_utils.$uid] || field[_symbol_utils.$uid],
               style,
               "aria-label": ariaLabel(field),
               "aria-required": false
@@ -48902,10 +47802,10 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.value = attributes.value ? (0, _utils.getColor)(attributes.value) : "";
             this.extras = null;
           }
-          [_xfa_object.$hasSettableValue]() {
+          [_symbol_utils.$hasSettableValue]() {
             return false;
           }
-          [_xfa_object.$toStyle]() {
+          [_symbol_utils.$toStyle]() {
             return this.value ? _util.Util.makeHexColor(this.value.r, this.value.g, this.value.b) : null;
           }
         }
@@ -48949,7 +47849,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.desc = null;
             this.extras = null;
           }
-          [_xfa_object.$toHTML](availableSpace) {
+          [_symbol_utils.$toHTML](availableSpace) {
             const left = (0, _html_utils.measureToString)(this.x);
             const top = (0, _html_utils.measureToString)(this.y);
             const style = {
@@ -48968,7 +47868,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               attributes: {
                 style,
                 class: classNames,
-                id: this[_xfa_object.$uid]
+                id: this[_symbol_utils.$uid]
               }
             });
           }
@@ -48992,7 +47892,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.color = null;
             this.extras = null;
           }
-          [_xfa_object.$toStyle]() {
+          [_symbol_utils.$toStyle]() {
             const style = (0, _html_utils.toStyle)(this, "visibility");
             style.radius = (0, _html_utils.measureToString)(this.join === "square" ? 0 : this.radius);
             return style;
@@ -49006,12 +47906,12 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.use = attributes.use || "";
             this.usehref = attributes.usehref || "";
           }
-          [_xfa_object.$finalize]() {
-            const date = this[_xfa_object.$content].trim();
-            this[_xfa_object.$content] = date ? new Date(date) : null;
+          [_symbol_utils.$finalize]() {
+            const date = this[_symbol_utils.$content].trim();
+            this[_symbol_utils.$content] = date ? new Date(date) : null;
           }
-          [_xfa_object.$toHTML](availableSpace) {
-            return valueToHtml(this[_xfa_object.$content] ? this[_xfa_object.$content].toString() : "");
+          [_symbol_utils.$toHTML](availableSpace) {
+            return valueToHtml(this[_symbol_utils.$content] ? this[_symbol_utils.$content].toString() : "");
           }
         }
         class DateTime extends _xfa_object.ContentObject {
@@ -49022,12 +47922,12 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.use = attributes.use || "";
             this.usehref = attributes.usehref || "";
           }
-          [_xfa_object.$finalize]() {
-            const date = this[_xfa_object.$content].trim();
-            this[_xfa_object.$content] = date ? new Date(date) : null;
+          [_symbol_utils.$finalize]() {
+            const date = this[_symbol_utils.$content].trim();
+            this[_symbol_utils.$content] = date ? new Date(date) : null;
           }
-          [_xfa_object.$toHTML](availableSpace) {
-            return valueToHtml(this[_xfa_object.$content] ? this[_xfa_object.$content].toString() : "");
+          [_symbol_utils.$toHTML](availableSpace) {
+            return valueToHtml(this[_symbol_utils.$content] ? this[_symbol_utils.$content].toString() : "");
           }
         }
         class DateTimeEdit extends _xfa_object.XFAObject {
@@ -49043,15 +47943,15 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.extras = null;
             this.margin = null;
           }
-          [_xfa_object.$toHTML](availableSpace) {
+          [_symbol_utils.$toHTML](availableSpace) {
             const style = (0, _html_utils.toStyle)(this, "border", "font", "margin");
-            const field = this[_xfa_object.$getParent]()[_xfa_object.$getParent]();
+            const field = this[_symbol_utils.$getParent]()[_symbol_utils.$getParent]();
             const html = {
               name: "input",
               attributes: {
                 type: "text",
-                fieldId: field[_xfa_object.$uid],
-                dataId: field[_xfa_object.$data]?.[_xfa_object.$uid] || field[_xfa_object.$uid],
+                fieldId: field[_symbol_utils.$uid],
+                dataId: field[_symbol_utils.$data]?.[_symbol_utils.$uid] || field[_symbol_utils.$uid],
                 class: ["xfaTextfield"],
                 style,
                 "aria-label": ariaLabel(field),
@@ -49089,12 +47989,12 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.use = attributes.use || "";
             this.usehref = attributes.usehref || "";
           }
-          [_xfa_object.$finalize]() {
-            const number = parseFloat(this[_xfa_object.$content].trim());
-            this[_xfa_object.$content] = isNaN(number) ? null : number;
+          [_symbol_utils.$finalize]() {
+            const number = parseFloat(this[_symbol_utils.$content].trim());
+            this[_symbol_utils.$content] = isNaN(number) ? null : number;
           }
-          [_xfa_object.$toHTML](availableSpace) {
-            return valueToHtml(this[_xfa_object.$content] !== null ? this[_xfa_object.$content].toString() : "");
+          [_symbol_utils.$toHTML](availableSpace) {
+            return valueToHtml(this[_symbol_utils.$content] !== null ? this[_symbol_utils.$content].toString() : "");
           }
         }
         class DefaultUi extends _xfa_object.XFAObject {
@@ -49186,16 +48086,16 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.value = null;
             this.setProperty = new _xfa_object.XFAObjectArray();
           }
-          [_xfa_object.$setValue](value) {
+          [_symbol_utils.$setValue](value) {
             _setValue(this, value);
           }
-          [_xfa_object.$toHTML](availableSpace) {
+          [_symbol_utils.$toHTML](availableSpace) {
             setTabIndex(this);
             if (this.presence === "hidden" || this.presence === "inactive") {
               return _utils.HTMLResult.EMPTY;
             }
             (0, _html_utils.fixDimensions)(this);
-            this[_xfa_object.$pushPara]();
+            this[_symbol_utils.$pushPara]();
             const savedW = this.w;
             const savedH = this.h;
             const {
@@ -49204,8 +48104,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               isBroken
             } = (0, _html_utils.layoutNode)(this, availableSpace);
             if (w && this.w === "") {
-              if (isBroken && this[_xfa_object.$getSubformParent]()[_xfa_object.$isThereMoreWidth]()) {
-                this[_xfa_object.$popPara]();
+              if (isBroken && this[_symbol_utils.$getSubformParent]()[_symbol_utils.$isThereMoreWidth]()) {
+                this[_symbol_utils.$popPara]();
                 return _utils.HTMLResult.FAILURE;
               }
               this.w = w;
@@ -49217,7 +48117,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             if (!(0, _layout.checkDimensions)(this, availableSpace)) {
               this.w = savedW;
               this.h = savedH;
-              this[_xfa_object.$popPara]();
+              this[_symbol_utils.$popPara]();
               return _utils.HTMLResult.FAILURE;
             }
             unsetFirstUnsplittable(this);
@@ -49236,7 +48136,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             }
             const attributes = {
               style,
-              id: this[_xfa_object.$uid],
+              id: this[_symbol_utils.$uid],
               class: classNames
             };
             if (this.name) {
@@ -49249,18 +48149,18 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             };
             applyAssist(this, attributes);
             const bbox = (0, _html_utils.computeBbox)(this, html, availableSpace);
-            const value = this.value ? this.value[_xfa_object.$toHTML](availableSpace).html : null;
+            const value = this.value ? this.value[_symbol_utils.$toHTML](availableSpace).html : null;
             if (value === null) {
               this.w = savedW;
               this.h = savedH;
-              this[_xfa_object.$popPara]();
+              this[_symbol_utils.$popPara]();
               return _utils.HTMLResult.success((0, _html_utils.createWrapper)(this, html), bbox);
             }
             html.children.push(value);
             (0, _html_utils.setPara)(this, style, value);
             this.w = savedW;
             this.h = savedH;
-            this[_xfa_object.$popPara]();
+            this[_symbol_utils.$popPara]();
             return _utils.HTMLResult.success((0, _html_utils.createWrapper)(this, html), bbox);
           }
         }
@@ -49277,12 +48177,12 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.color = null;
             this.extras = null;
           }
-          [_xfa_object.$toStyle]() {
+          [_symbol_utils.$toStyle]() {
             const style = (0, _html_utils.toStyle)(this, "visibility");
             Object.assign(style, {
               linecap: this.cap,
               width: (0, _html_utils.measureToString)(this.thickness),
-              color: this.color ? this.color[_xfa_object.$toStyle]() : "#000000",
+              color: this.color ? this.color[_symbol_utils.$toStyle]() : "#000000",
               style: ""
             });
             if (this.presence !== "visible") {
@@ -49423,25 +48323,25 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.use = attributes.use || "";
             this.usehref = attributes.usehref || "";
           }
-          [_xfa_object.$isCDATAXml]() {
+          [_symbol_utils.$isCDATAXml]() {
             return this.contentType === "text/html";
           }
-          [_xfa_object.$onChild](child) {
-            if (this.contentType === "text/html" && child[_xfa_object.$namespaceId] === _namespaces.NamespaceIds.xhtml.id) {
-              this[_xfa_object.$content] = child;
+          [_symbol_utils.$onChild](child) {
+            if (this.contentType === "text/html" && child[_symbol_utils.$namespaceId] === _namespaces.NamespaceIds.xhtml.id) {
+              this[_symbol_utils.$content] = child;
               return true;
             }
             if (this.contentType === "text/xml") {
-              this[_xfa_object.$content] = child;
+              this[_symbol_utils.$content] = child;
               return true;
             }
             return false;
           }
-          [_xfa_object.$toHTML](availableSpace) {
-            if (this.contentType !== "text/html" || !this[_xfa_object.$content]) {
+          [_symbol_utils.$toHTML](availableSpace) {
+            if (this.contentType !== "text/html" || !this[_symbol_utils.$content]) {
               return _utils.HTMLResult.EMPTY;
             }
-            return this[_xfa_object.$content][_xfa_object.$toHTML](availableSpace);
+            return this[_symbol_utils.$content][_symbol_utils.$toHTML](availableSpace);
           }
         }
         class ExObject extends _xfa_object.XFAObject {
@@ -49512,53 +48412,53 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.field = new _xfa_object.XFAObjectArray();
             this.setProperty = new _xfa_object.XFAObjectArray();
           }
-          [_xfa_object.$isBindable]() {
+          [_symbol_utils.$isBindable]() {
             return true;
           }
-          [_xfa_object.$hasSettableValue]() {
+          [_symbol_utils.$hasSettableValue]() {
             return true;
           }
-          [_xfa_object.$setValue](value) {
+          [_symbol_utils.$setValue](value) {
             for (const field of this.field.children) {
               if (!field.value) {
                 const nodeValue = new Value({});
-                field[_xfa_object.$appendChild](nodeValue);
+                field[_symbol_utils.$appendChild](nodeValue);
                 field.value = nodeValue;
               }
-              field.value[_xfa_object.$setValue](value);
+              field.value[_symbol_utils.$setValue](value);
             }
           }
-          [_xfa_object.$isThereMoreWidth]() {
-            return this.layout.endsWith("-tb") && this[_xfa_object.$extra].attempt === 0 && this[_xfa_object.$extra].numberInLine > 0 || this[_xfa_object.$getParent]()[_xfa_object.$isThereMoreWidth]();
+          [_symbol_utils.$isThereMoreWidth]() {
+            return this.layout.endsWith("-tb") && this[_symbol_utils.$extra].attempt === 0 && this[_symbol_utils.$extra].numberInLine > 0 || this[_symbol_utils.$getParent]()[_symbol_utils.$isThereMoreWidth]();
           }
-          [_xfa_object.$isSplittable]() {
-            const parent = this[_xfa_object.$getSubformParent]();
-            if (!parent[_xfa_object.$isSplittable]()) {
+          [_symbol_utils.$isSplittable]() {
+            const parent = this[_symbol_utils.$getSubformParent]();
+            if (!parent[_symbol_utils.$isSplittable]()) {
               return false;
             }
-            if (this[_xfa_object.$extra]._isSplittable !== undefined) {
-              return this[_xfa_object.$extra]._isSplittable;
+            if (this[_symbol_utils.$extra]._isSplittable !== undefined) {
+              return this[_symbol_utils.$extra]._isSplittable;
             }
             if (this.layout === "position" || this.layout.includes("row")) {
-              this[_xfa_object.$extra]._isSplittable = false;
+              this[_symbol_utils.$extra]._isSplittable = false;
               return false;
             }
-            if (parent.layout?.endsWith("-tb") && parent[_xfa_object.$extra].numberInLine !== 0) {
+            if (parent.layout?.endsWith("-tb") && parent[_symbol_utils.$extra].numberInLine !== 0) {
               return false;
             }
-            this[_xfa_object.$extra]._isSplittable = true;
+            this[_symbol_utils.$extra]._isSplittable = true;
             return true;
           }
-          [_xfa_object.$flushHTML]() {
+          [_symbol_utils.$flushHTML]() {
             return (0, _layout.flushHTML)(this);
           }
-          [_xfa_object.$addHTML](html, bbox) {
+          [_symbol_utils.$addHTML](html, bbox) {
             (0, _layout.addHTML)(this, html, bbox);
           }
-          [_xfa_object.$getAvailableSpace]() {
+          [_symbol_utils.$getAvailableSpace]() {
             return (0, _layout.getAvailableSpace)(this);
           }
-          [_xfa_object.$toHTML](availableSpace) {
+          [_symbol_utils.$toHTML](availableSpace) {
             setTabIndex(this);
             if (this.presence === "hidden" || this.presence === "inactive" || this.h === 0 || this.w === 0) {
               return _utils.HTMLResult.EMPTY;
@@ -49566,14 +48466,14 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             (0, _html_utils.fixDimensions)(this);
             const children = [];
             const attributes = {
-              id: this[_xfa_object.$uid],
+              id: this[_symbol_utils.$uid],
               class: []
             };
             (0, _html_utils.setAccess)(this, attributes.class);
-            if (!this[_xfa_object.$extra]) {
-              this[_xfa_object.$extra] = Object.create(null);
+            if (!this[_symbol_utils.$extra]) {
+              this[_symbol_utils.$extra] = Object.create(null);
             }
-            Object.assign(this[_xfa_object.$extra], {
+            Object.assign(this[_symbol_utils.$extra], {
               children,
               attributes,
               attempt: 0,
@@ -49588,7 +48488,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               prevHeight: 0,
               currentWidth: 0
             });
-            const isSplittable = this[_xfa_object.$isSplittable]();
+            const isSplittable = this[_symbol_utils.$isSplittable]();
             if (!isSplittable) {
               setFirstUnsplittable(this);
             }
@@ -49597,10 +48497,10 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             }
             const filter = new Set(["field"]);
             if (this.layout.includes("row")) {
-              const columnWidths = this[_xfa_object.$getSubformParent]().columnWidths;
+              const columnWidths = this[_symbol_utils.$getSubformParent]().columnWidths;
               if (Array.isArray(columnWidths) && columnWidths.length > 0) {
-                this[_xfa_object.$extra].columnWidths = columnWidths;
-                this[_xfa_object.$extra].currentColumn = 0;
+                this[_symbol_utils.$extra].columnWidths = columnWidths;
+                this[_symbol_utils.$extra].currentColumn = 0;
               }
             }
             const style = (0, _html_utils.toStyle)(this, "anchorType", "dimensions", "position", "presence", "border", "margin", "hAlign");
@@ -49617,14 +48517,14 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             if (this.name) {
               attributes.xfaName = this.name;
             }
-            this[_xfa_object.$pushPara]();
+            this[_symbol_utils.$pushPara]();
             const isLrTb = this.layout === "lr-tb" || this.layout === "rl-tb";
             const maxRun = isLrTb ? MAX_ATTEMPTS_FOR_LRTB_LAYOUT : 1;
-            for (; this[_xfa_object.$extra].attempt < maxRun; this[_xfa_object.$extra].attempt++) {
-              if (isLrTb && this[_xfa_object.$extra].attempt === MAX_ATTEMPTS_FOR_LRTB_LAYOUT - 1) {
-                this[_xfa_object.$extra].numberInLine = 0;
+            for (; this[_symbol_utils.$extra].attempt < maxRun; this[_symbol_utils.$extra].attempt++) {
+              if (isLrTb && this[_symbol_utils.$extra].attempt === MAX_ATTEMPTS_FOR_LRTB_LAYOUT - 1) {
+                this[_symbol_utils.$extra].numberInLine = 0;
               }
-              const result = this[_xfa_object.$childrenToHTML]({
+              const result = this[_symbol_utils.$childrenToHTML]({
                 filter,
                 include: true
               });
@@ -49632,21 +48532,21 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 break;
               }
               if (result.isBreak()) {
-                this[_xfa_object.$popPara]();
+                this[_symbol_utils.$popPara]();
                 return result;
               }
-              if (isLrTb && this[_xfa_object.$extra].attempt === 0 && this[_xfa_object.$extra].numberInLine === 0 && !this[_xfa_object.$getTemplateRoot]()[_xfa_object.$extra].noLayoutFailure) {
-                this[_xfa_object.$extra].attempt = maxRun;
+              if (isLrTb && this[_symbol_utils.$extra].attempt === 0 && this[_symbol_utils.$extra].numberInLine === 0 && !this[_symbol_utils.$getTemplateRoot]()[_symbol_utils.$extra].noLayoutFailure) {
+                this[_symbol_utils.$extra].attempt = maxRun;
                 break;
               }
             }
-            this[_xfa_object.$popPara]();
+            this[_symbol_utils.$popPara]();
             if (!isSplittable) {
               unsetFirstUnsplittable(this);
             }
-            if (this[_xfa_object.$extra].attempt === maxRun) {
+            if (this[_symbol_utils.$extra].attempt === maxRun) {
               if (!isSplittable) {
-                delete this[_xfa_object.$extra];
+                delete this[_symbol_utils.$extra];
               }
               return _utils.HTMLResult.FAILURE;
             }
@@ -49656,8 +48556,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               marginH = this.margin.leftInset + this.margin.rightInset;
               marginV = this.margin.topInset + this.margin.bottomInset;
             }
-            const width = Math.max(this[_xfa_object.$extra].width + marginH, this.w || 0);
-            const height = Math.max(this[_xfa_object.$extra].height + marginV, this.h || 0);
+            const width = Math.max(this[_symbol_utils.$extra].width + marginH, this.w || 0);
+            const height = Math.max(this[_symbol_utils.$extra].height + marginV, this.h || 0);
             const bbox = [this.x, this.y, width, height];
             if (this.w === "") {
               style.width = (0, _html_utils.measureToString)(width);
@@ -49671,7 +48571,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               children
             };
             applyAssist(this, attributes);
-            delete this[_xfa_object.$extra];
+            delete this[_symbol_utils.$extra];
             return _utils.HTMLResult.success((0, _html_utils.createWrapper)(this, html), bbox);
           }
         }
@@ -49760,18 +48660,18 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.event = new _xfa_object.XFAObjectArray();
             this.setProperty = new _xfa_object.XFAObjectArray();
           }
-          [_xfa_object.$isBindable]() {
+          [_symbol_utils.$isBindable]() {
             return true;
           }
-          [_xfa_object.$setValue](value) {
+          [_symbol_utils.$setValue](value) {
             _setValue(this, value);
           }
-          [_xfa_object.$toHTML](availableSpace) {
+          [_symbol_utils.$toHTML](availableSpace) {
             setTabIndex(this);
             if (!this.ui) {
               this.ui = new Ui({});
-              this.ui[_xfa_object.$globalData] = this[_xfa_object.$globalData];
-              this[_xfa_object.$appendChild](this.ui);
+              this.ui[_symbol_utils.$globalData] = this[_symbol_utils.$globalData];
+              this[_symbol_utils.$appendChild](this.ui);
               let node;
               switch (this.items.children.length) {
                 case 0:
@@ -49787,16 +48687,16 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                   this.ui.choiceList = node;
                   break;
               }
-              this.ui[_xfa_object.$appendChild](node);
+              this.ui[_symbol_utils.$appendChild](node);
             }
             if (!this.ui || this.presence === "hidden" || this.presence === "inactive" || this.h === 0 || this.w === 0) {
               return _utils.HTMLResult.EMPTY;
             }
             if (this.caption) {
-              delete this.caption[_xfa_object.$extra];
+              delete this.caption[_symbol_utils.$extra];
             }
-            this[_xfa_object.$pushPara]();
-            const caption = this.caption ? this.caption[_xfa_object.$toHTML](availableSpace).html : null;
+            this[_symbol_utils.$pushPara]();
+            const caption = this.caption ? this.caption[_symbol_utils.$toHTML](availableSpace).html : null;
             const savedW = this.w;
             const savedH = this.h;
             let marginH = 0;
@@ -49825,7 +48725,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                   uiH = (0, _fonts.getMetrics)(this.font, true).lineNoGap;
                 }
               }
-              borderDims = getBorderDims(this.ui[_xfa_object.$getExtra]());
+              borderDims = getBorderDims(this.ui[_symbol_utils.$getExtra]());
               uiW += borderDims.w;
               uiH += borderDims.h;
               if (this.caption) {
@@ -49833,9 +48733,9 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                   w,
                   h,
                   isBroken
-                } = this.caption[_xfa_object.$getExtra](availableSpace);
-                if (isBroken && this[_xfa_object.$getSubformParent]()[_xfa_object.$isThereMoreWidth]()) {
-                  this[_xfa_object.$popPara]();
+                } = this.caption[_symbol_utils.$getExtra](availableSpace);
+                if (isBroken && this[_symbol_utils.$getSubformParent]()[_symbol_utils.$isThereMoreWidth]()) {
+                  this[_symbol_utils.$popPara]();
                   return _utils.HTMLResult.FAILURE;
                 }
                 width = w;
@@ -49864,13 +48764,13 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 this.h = Math.min(this.maxH <= 0 ? Infinity : this.maxH, this.minH + 1 < height ? height : this.minH);
               }
             }
-            this[_xfa_object.$popPara]();
+            this[_symbol_utils.$popPara]();
             (0, _html_utils.fixDimensions)(this);
             setFirstUnsplittable(this);
             if (!(0, _layout.checkDimensions)(this, availableSpace)) {
               this.w = savedW;
               this.h = savedH;
-              this[_xfa_object.$popPara]();
+              this[_symbol_utils.$popPara]();
               return _utils.HTMLResult.FAILURE;
             }
             unsetFirstUnsplittable(this);
@@ -49885,7 +48785,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             }
             const attributes = {
               style,
-              id: this[_xfa_object.$uid],
+              id: this[_symbol_utils.$uid],
               class: classNames
             };
             if (style.margin) {
@@ -49903,18 +48803,18 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               children
             };
             applyAssist(this, attributes);
-            const borderStyle = this.border ? this.border[_xfa_object.$toStyle]() : null;
+            const borderStyle = this.border ? this.border[_symbol_utils.$toStyle]() : null;
             const bbox = (0, _html_utils.computeBbox)(this, html, availableSpace);
-            const ui = this.ui[_xfa_object.$toHTML]().html;
+            const ui = this.ui[_symbol_utils.$toHTML]().html;
             if (!ui) {
               Object.assign(style, borderStyle);
               return _utils.HTMLResult.success((0, _html_utils.createWrapper)(this, html), bbox);
             }
-            if (this[_xfa_object.$tabIndex]) {
+            if (this[_symbol_utils.$tabIndex]) {
               if (ui.children?.[0]) {
-                ui.children[0].attributes.tabindex = this[_xfa_object.$tabIndex];
+                ui.children[0].attributes.tabindex = this[_symbol_utils.$tabIndex];
               } else {
-                ui.attributes.tabindex = this[_xfa_object.$tabIndex];
+                ui.attributes.tabindex = this[_symbol_utils.$tabIndex];
               }
             }
             if (!ui.attributes.style) {
@@ -49932,15 +48832,15 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             children.push(ui);
             if (this.value) {
               if (this.ui.imageEdit) {
-                ui.children.push(this.value[_xfa_object.$toHTML]().html);
+                ui.children.push(this.value[_symbol_utils.$toHTML]().html);
               } else if (!this.ui.button) {
                 let value = "";
                 if (this.value.exData) {
-                  value = this.value.exData[_xfa_object.$text]();
+                  value = this.value.exData[_symbol_utils.$text]();
                 } else if (this.value.text) {
-                  value = this.value.text[_xfa_object.$getExtra]();
+                  value = this.value.text[_symbol_utils.$getExtra]();
                 } else {
-                  const htmlValue = this.value[_xfa_object.$toHTML]().html;
+                  const htmlValue = this.value[_symbol_utils.$toHTML]().html;
                   if (htmlValue !== null) {
                     value = htmlValue.children[0].value;
                   }
@@ -49962,12 +48862,12 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               }
             }
             if (!this.ui.imageEdit && ui.children?.[0] && this.h) {
-              borderDims = borderDims || getBorderDims(this.ui[_xfa_object.$getExtra]());
+              borderDims = borderDims || getBorderDims(this.ui[_symbol_utils.$getExtra]());
               let captionHeight = 0;
               if (this.caption && ["top", "bottom"].includes(this.caption.placement)) {
                 captionHeight = this.caption.reserve;
                 if (captionHeight <= 0) {
-                  captionHeight = this.caption[_xfa_object.$getExtra](availableSpace).h;
+                  captionHeight = this.caption[_symbol_utils.$getExtra](availableSpace).h;
                 }
                 const inputHeight = this.h - captionHeight - marginV - borderDims.h;
                 ui.children[0].attributes.style.height = (0, _html_utils.measureToString)(inputHeight);
@@ -50040,10 +48940,10 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.solid = null;
             this.stipple = null;
           }
-          [_xfa_object.$toStyle]() {
-            const parent = this[_xfa_object.$getParent]();
-            const grandpa = parent[_xfa_object.$getParent]();
-            const ggrandpa = grandpa[_xfa_object.$getParent]();
+          [_symbol_utils.$toStyle]() {
+            const parent = this[_symbol_utils.$getParent]();
+            const grandpa = parent[_symbol_utils.$getParent]();
+            const ggrandpa = grandpa[_symbol_utils.$getParent]();
             const style = Object.create(null);
             let propName = "color";
             let altPropName = propName;
@@ -50066,14 +48966,14 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               if (!(obj instanceof _xfa_object.XFAObject)) {
                 continue;
               }
-              const color = obj[_xfa_object.$toStyle](this.color);
+              const color = obj[_symbol_utils.$toStyle](this.color);
               if (color) {
                 style[color.startsWith("#") ? propName : altPropName] = color;
               }
               return style;
             }
             if (this.color?.value) {
-              const color = this.color[_xfa_object.$toStyle]();
+              const color = this.color[_symbol_utils.$toStyle]();
               style[color.startsWith("#") ? propName : altPropName] = color;
             }
             return style;
@@ -50112,12 +49012,12 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.use = attributes.use || "";
             this.usehref = attributes.usehref || "";
           }
-          [_xfa_object.$finalize]() {
-            const number = parseFloat(this[_xfa_object.$content].trim());
-            this[_xfa_object.$content] = isNaN(number) ? null : number;
+          [_symbol_utils.$finalize]() {
+            const number = parseFloat(this[_symbol_utils.$content].trim());
+            this[_symbol_utils.$content] = isNaN(number) ? null : number;
           }
-          [_xfa_object.$toHTML](availableSpace) {
-            return valueToHtml(this[_xfa_object.$content] !== null ? this[_xfa_object.$content].toString() : "");
+          [_symbol_utils.$toHTML](availableSpace) {
+            return valueToHtml(this[_symbol_utils.$content] !== null ? this[_symbol_utils.$content].toString() : "");
           }
         }
         class Font extends _xfa_object.XFAObject {
@@ -50164,11 +49064,11 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.extras = null;
             this.fill = null;
           }
-          [_xfa_object.$clean](builder) {
-            super[_xfa_object.$clean](builder);
-            this[_xfa_object.$globalData].usedTypefaces.add(this.typeface);
+          [_symbol_utils.$clean](builder) {
+            super[_symbol_utils.$clean](builder);
+            this[_symbol_utils.$globalData].usedTypefaces.add(this.typeface);
           }
-          [_xfa_object.$toStyle]() {
+          [_symbol_utils.$toStyle]() {
             const style = (0, _html_utils.toStyle)(this, "fill");
             const color = style.color;
             if (color) {
@@ -50199,7 +49099,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             }
             style.fontStyle = this.posture;
             style.fontSize = (0, _html_utils.measureToString)(0.99 * this.size);
-            (0, _html_utils.setFontFamily)(this, this, this[_xfa_object.$globalData].fontFinder, style);
+            (0, _html_utils.setFontFamily)(this, this, this[_symbol_utils.$globalData].fontFinder, style);
             if (this.underline !== 0) {
               style.textDecoration = "underline";
               if (this.underline === 2) {
@@ -50279,16 +49179,16 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.use = attributes.use || "";
             this.usehref = attributes.usehref || "";
           }
-          [_xfa_object.$toHTML]() {
+          [_symbol_utils.$toHTML]() {
             if (this.contentType && !MIMES.has(this.contentType.toLowerCase())) {
               return _utils.HTMLResult.EMPTY;
             }
-            let buffer = this[_xfa_object.$globalData].images && this[_xfa_object.$globalData].images.get(this.href);
-            if (!buffer && (this.href || !this[_xfa_object.$content])) {
+            let buffer = this[_symbol_utils.$globalData].images && this[_symbol_utils.$globalData].images.get(this.href);
+            if (!buffer && (this.href || !this[_symbol_utils.$content])) {
               return _utils.HTMLResult.EMPTY;
             }
             if (!buffer && this.transferEncoding === "base64") {
-              buffer = (0, _util.stringToBytes)(atob(this[_xfa_object.$content]));
+              buffer = (0, _util.stringToBytes)(atob(this[_symbol_utils.$content]));
             }
             if (!buffer) {
               return _utils.HTMLResult.EMPTY;
@@ -50332,14 +49232,14 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 };
                 break;
             }
-            const parent = this[_xfa_object.$getParent]();
+            const parent = this[_symbol_utils.$getParent]();
             return _utils.HTMLResult.success({
               name: "img",
               attributes: {
                 class: ["xfaImage"],
                 style,
                 src: URL.createObjectURL(blob),
-                alt: parent ? ariaLabel(parent[_xfa_object.$getParent]()) : null
+                alt: parent ? ariaLabel(parent[_symbol_utils.$getParent]()) : null
               }
             });
           }
@@ -50355,7 +49255,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.extras = null;
             this.margin = null;
           }
-          [_xfa_object.$toHTML](availableSpace) {
+          [_symbol_utils.$toHTML](availableSpace) {
             if (this.data === "embed") {
               return _utils.HTMLResult.success({
                 name: "div",
@@ -50374,12 +49274,12 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.use = attributes.use || "";
             this.usehref = attributes.usehref || "";
           }
-          [_xfa_object.$finalize]() {
-            const number = parseInt(this[_xfa_object.$content].trim(), 10);
-            this[_xfa_object.$content] = isNaN(number) ? null : number;
+          [_symbol_utils.$finalize]() {
+            const number = parseInt(this[_symbol_utils.$content].trim(), 10);
+            this[_symbol_utils.$content] = isNaN(number) ? null : number;
           }
-          [_xfa_object.$toHTML](availableSpace) {
-            return valueToHtml(this[_xfa_object.$content] !== null ? this[_xfa_object.$content].toString() : "");
+          [_symbol_utils.$toHTML](availableSpace) {
+            return valueToHtml(this[_symbol_utils.$content] !== null ? this[_symbol_utils.$content].toString() : "");
           }
         }
         class Issuers extends _xfa_object.XFAObject {
@@ -50417,10 +49317,10 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.text = new _xfa_object.XFAObjectArray();
             this.time = new _xfa_object.XFAObjectArray();
           }
-          [_xfa_object.$toHTML]() {
+          [_symbol_utils.$toHTML]() {
             const output = [];
-            for (const child of this[_xfa_object.$getChildren]()) {
-              output.push(child[_xfa_object.$text]());
+            for (const child of this[_symbol_utils.$getChildren]()) {
+              output.push(child[_symbol_utils.$text]());
             }
             return _utils.HTMLResult.success(output);
           }
@@ -50468,10 +49368,10 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.usehref = attributes.usehref || "";
             this.edge = null;
           }
-          [_xfa_object.$toHTML]() {
-            const parent = this[_xfa_object.$getParent]()[_xfa_object.$getParent]();
+          [_symbol_utils.$toHTML]() {
+            const parent = this[_symbol_utils.$getParent]()[_symbol_utils.$getParent]();
             const edge = this.edge || new Edge({});
-            const edgeStyle = edge[_xfa_object.$toStyle]();
+            const edgeStyle = edge[_symbol_utils.$toStyle]();
             const style = Object.create(null);
             const thickness = edge.presence === "visible" ? edge.thickness : 0;
             style.strokeWidth = (0, _html_utils.measureToString)(thickness);
@@ -50485,12 +49385,10 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             } else if (parent.h <= thickness) {
               [x1, y1, x2, y2] = [0, "50%", "100%", "50%"];
               height = style.strokeWidth;
+            } else if (this.slope === "\\") {
+              [x1, y1, x2, y2] = [0, 0, "100%", "100%"];
             } else {
-              if (this.slope === "\\") {
-                [x1, y1, x2, y2] = [0, 0, "100%", "100%"];
-              } else {
-                [x1, y1, x2, y2] = [0, "100%", "100%", 0];
-              }
+              [x1, y1, x2, y2] = [0, "100%", "100%", 0];
             }
             const line = {
               name: "line",
@@ -50542,10 +49440,10 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.color = null;
             this.extras = null;
           }
-          [_xfa_object.$toStyle](startColor) {
-            startColor = startColor ? startColor[_xfa_object.$toStyle]() : "#FFFFFF";
+          [_symbol_utils.$toStyle](startColor) {
+            startColor = startColor ? startColor[_symbol_utils.$toStyle]() : "#FFFFFF";
             const transf = this.type.replace(/([RBLT])/, " $1").toLowerCase();
-            const endColor = this.color ? this.color[_xfa_object.$toStyle]() : "#000000";
+            const endColor = this.color ? this.color[_symbol_utils.$toStyle]() : "#000000";
             return `linear-gradient(${transf}, ${startColor}, ${endColor})`;
           }
         }
@@ -50557,8 +49455,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.use = attributes.use || "";
             this.usehref = attributes.usehref || "";
           }
-          [_xfa_object.$finalize]() {
-            this[_xfa_object.$content] = (0, _utils.getStringOption)(this[_xfa_object.$content], ["auto", "0", "1"]);
+          [_symbol_utils.$finalize]() {
+            this[_symbol_utils.$content] = (0, _utils.getStringOption)(this[_symbol_utils.$content], ["auto", "0", "1"]);
           }
         }
         class Manifest extends _xfa_object.XFAObject {
@@ -50585,7 +49483,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.usehref = attributes.usehref || "";
             this.extras = null;
           }
-          [_xfa_object.$toStyle]() {
+          [_symbol_utils.$toStyle]() {
             return {
               margin: (0, _html_utils.measureToString)(this.topInset) + " " + (0, _html_utils.measureToString)(this.rightInset) + " " + (0, _html_utils.measureToString)(this.bottomInset) + " " + (0, _html_utils.measureToString)(this.leftInset)
             };
@@ -50641,15 +49539,15 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.extras = null;
             this.margin = null;
           }
-          [_xfa_object.$toHTML](availableSpace) {
+          [_symbol_utils.$toHTML](availableSpace) {
             const style = (0, _html_utils.toStyle)(this, "border", "font", "margin");
-            const field = this[_xfa_object.$getParent]()[_xfa_object.$getParent]();
+            const field = this[_symbol_utils.$getParent]()[_symbol_utils.$getParent]();
             const html = {
               name: "input",
               attributes: {
                 type: "text",
-                fieldId: field[_xfa_object.$uid],
-                dataId: field[_xfa_object.$data]?.[_xfa_object.$uid] || field[_xfa_object.$uid],
+                fieldId: field[_symbol_utils.$uid],
+                dataId: field[_symbol_utils.$data]?.[_symbol_utils.$uid] || field[_symbol_utils.$uid],
                 class: ["xfaTextfield"],
                 style,
                 "aria-label": ariaLabel(field),
@@ -50692,8 +49590,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.usehref = attributes.usehref || "";
             this.extras = null;
           }
-          [_xfa_object.$clean]() {
-            const parent = this[_xfa_object.$getParent]();
+          [_symbol_utils.$clean]() {
+            const parent = this[_symbol_utils.$getParent]();
             const originalMin = this.min;
             if (this.min === "") {
               this.min = parent instanceof PageArea || parent instanceof PageSet ? 0 : 1;
@@ -50742,14 +49640,14 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.use = attributes.use || "";
             this.usehref = attributes.usehref || "";
           }
-          [_xfa_object.$getExtra]() {
-            if (!this[_xfa_object.$extra]) {
-              const parent = this[_xfa_object.$getParent]();
-              const root = this[_xfa_object.$getTemplateRoot]();
-              const target = root[_xfa_object.$searchNode](this.target, parent);
-              const leader = root[_xfa_object.$searchNode](this.leader, parent);
-              const trailer = root[_xfa_object.$searchNode](this.trailer, parent);
-              this[_xfa_object.$extra] = {
+          [_symbol_utils.$getExtra]() {
+            if (!this[_symbol_utils.$extra]) {
+              const parent = this[_symbol_utils.$getParent]();
+              const root = this[_symbol_utils.$getTemplateRoot]();
+              const target = root[_symbol_utils.$searchNode](this.target, parent);
+              const leader = root[_symbol_utils.$searchNode](this.leader, parent);
+              const trailer = root[_symbol_utils.$searchNode](this.trailer, parent);
+              this[_symbol_utils.$extra] = {
                 target: target?.[0] || null,
                 leader: leader?.[0] || null,
                 trailer: trailer?.[0] || null,
@@ -50757,7 +49655,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 addTrailer: false
               };
             }
-            return this[_xfa_object.$extra];
+            return this[_symbol_utils.$extra];
           }
         }
         class PageArea extends _xfa_object.XFAObject {
@@ -50792,52 +49690,52 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.field = new _xfa_object.XFAObjectArray();
             this.subform = new _xfa_object.XFAObjectArray();
           }
-          [_xfa_object.$isUsable]() {
-            if (!this[_xfa_object.$extra]) {
-              this[_xfa_object.$extra] = {
+          [_symbol_utils.$isUsable]() {
+            if (!this[_symbol_utils.$extra]) {
+              this[_symbol_utils.$extra] = {
                 numberOfUse: 0
               };
               return true;
             }
-            return !this.occur || this.occur.max === -1 || this[_xfa_object.$extra].numberOfUse < this.occur.max;
+            return !this.occur || this.occur.max === -1 || this[_symbol_utils.$extra].numberOfUse < this.occur.max;
           }
-          [_xfa_object.$cleanPage]() {
-            delete this[_xfa_object.$extra];
+          [_symbol_utils.$cleanPage]() {
+            delete this[_symbol_utils.$extra];
           }
-          [_xfa_object.$getNextPage]() {
-            if (!this[_xfa_object.$extra]) {
-              this[_xfa_object.$extra] = {
+          [_symbol_utils.$getNextPage]() {
+            if (!this[_symbol_utils.$extra]) {
+              this[_symbol_utils.$extra] = {
                 numberOfUse: 0
               };
             }
-            const parent = this[_xfa_object.$getParent]();
+            const parent = this[_symbol_utils.$getParent]();
             if (parent.relation === "orderedOccurrence") {
-              if (this[_xfa_object.$isUsable]()) {
-                this[_xfa_object.$extra].numberOfUse += 1;
+              if (this[_symbol_utils.$isUsable]()) {
+                this[_symbol_utils.$extra].numberOfUse += 1;
                 return this;
               }
             }
-            return parent[_xfa_object.$getNextPage]();
+            return parent[_symbol_utils.$getNextPage]();
           }
-          [_xfa_object.$getAvailableSpace]() {
-            return this[_xfa_object.$extra].space || {
+          [_symbol_utils.$getAvailableSpace]() {
+            return this[_symbol_utils.$extra].space || {
               width: 0,
               height: 0
             };
           }
-          [_xfa_object.$toHTML]() {
-            if (!this[_xfa_object.$extra]) {
-              this[_xfa_object.$extra] = {
+          [_symbol_utils.$toHTML]() {
+            if (!this[_symbol_utils.$extra]) {
+              this[_symbol_utils.$extra] = {
                 numberOfUse: 1
               };
             }
             const children = [];
-            this[_xfa_object.$extra].children = children;
+            this[_symbol_utils.$extra].children = children;
             const style = Object.create(null);
             if (this.medium && this.medium.short && this.medium.long) {
               style.width = (0, _html_utils.measureToString)(this.medium.short);
               style.height = (0, _html_utils.measureToString)(this.medium.long);
-              this[_xfa_object.$extra].space = {
+              this[_symbol_utils.$extra].space = {
                 width: this.medium.short,
                 height: this.medium.long
               };
@@ -50845,7 +49743,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 const x = style.width;
                 style.width = style.height;
                 style.height = x;
-                this[_xfa_object.$extra].space = {
+                this[_symbol_utils.$extra].space = {
                   width: this.medium.long,
                   height: this.medium.short
                 };
@@ -50853,11 +49751,11 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             } else {
               (0, _util.warn)("XFA - No medium specified in pageArea: please file a bug.");
             }
-            this[_xfa_object.$childrenToHTML]({
+            this[_symbol_utils.$childrenToHTML]({
               filter: new Set(["area", "draw", "field", "subform"]),
               include: true
             });
-            this[_xfa_object.$childrenToHTML]({
+            this[_symbol_utils.$childrenToHTML]({
               filter: new Set(["contentArea"]),
               include: true
             });
@@ -50866,7 +49764,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               children,
               attributes: {
                 class: ["xfaPage"],
-                id: this[_xfa_object.$uid],
+                id: this[_symbol_utils.$uid],
                 style,
                 xfaName: this.name
               }
@@ -50888,49 +49786,49 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.pageArea = new _xfa_object.XFAObjectArray();
             this.pageSet = new _xfa_object.XFAObjectArray();
           }
-          [_xfa_object.$cleanPage]() {
+          [_symbol_utils.$cleanPage]() {
             for (const page of this.pageArea.children) {
-              page[_xfa_object.$cleanPage]();
+              page[_symbol_utils.$cleanPage]();
             }
             for (const page of this.pageSet.children) {
-              page[_xfa_object.$cleanPage]();
+              page[_symbol_utils.$cleanPage]();
             }
           }
-          [_xfa_object.$isUsable]() {
-            return !this.occur || this.occur.max === -1 || this[_xfa_object.$extra].numberOfUse < this.occur.max;
+          [_symbol_utils.$isUsable]() {
+            return !this.occur || this.occur.max === -1 || this[_symbol_utils.$extra].numberOfUse < this.occur.max;
           }
-          [_xfa_object.$getNextPage]() {
-            if (!this[_xfa_object.$extra]) {
-              this[_xfa_object.$extra] = {
+          [_symbol_utils.$getNextPage]() {
+            if (!this[_symbol_utils.$extra]) {
+              this[_symbol_utils.$extra] = {
                 numberOfUse: 1,
                 pageIndex: -1,
                 pageSetIndex: -1
               };
             }
             if (this.relation === "orderedOccurrence") {
-              if (this[_xfa_object.$extra].pageIndex + 1 < this.pageArea.children.length) {
-                this[_xfa_object.$extra].pageIndex += 1;
-                const pageArea = this.pageArea.children[this[_xfa_object.$extra].pageIndex];
-                return pageArea[_xfa_object.$getNextPage]();
+              if (this[_symbol_utils.$extra].pageIndex + 1 < this.pageArea.children.length) {
+                this[_symbol_utils.$extra].pageIndex += 1;
+                const pageArea = this.pageArea.children[this[_symbol_utils.$extra].pageIndex];
+                return pageArea[_symbol_utils.$getNextPage]();
               }
-              if (this[_xfa_object.$extra].pageSetIndex + 1 < this.pageSet.children.length) {
-                this[_xfa_object.$extra].pageSetIndex += 1;
-                return this.pageSet.children[this[_xfa_object.$extra].pageSetIndex][_xfa_object.$getNextPage]();
+              if (this[_symbol_utils.$extra].pageSetIndex + 1 < this.pageSet.children.length) {
+                this[_symbol_utils.$extra].pageSetIndex += 1;
+                return this.pageSet.children[this[_symbol_utils.$extra].pageSetIndex][_symbol_utils.$getNextPage]();
               }
-              if (this[_xfa_object.$isUsable]()) {
-                this[_xfa_object.$extra].numberOfUse += 1;
-                this[_xfa_object.$extra].pageIndex = -1;
-                this[_xfa_object.$extra].pageSetIndex = -1;
-                return this[_xfa_object.$getNextPage]();
+              if (this[_symbol_utils.$isUsable]()) {
+                this[_symbol_utils.$extra].numberOfUse += 1;
+                this[_symbol_utils.$extra].pageIndex = -1;
+                this[_symbol_utils.$extra].pageSetIndex = -1;
+                return this[_symbol_utils.$getNextPage]();
               }
-              const parent = this[_xfa_object.$getParent]();
+              const parent = this[_symbol_utils.$getParent]();
               if (parent instanceof PageSet) {
-                return parent[_xfa_object.$getNextPage]();
+                return parent[_symbol_utils.$getNextPage]();
               }
-              this[_xfa_object.$cleanPage]();
-              return this[_xfa_object.$getNextPage]();
+              this[_symbol_utils.$cleanPage]();
+              return this[_symbol_utils.$getNextPage]();
             }
-            const pageNumber = this[_xfa_object.$getTemplateRoot]()[_xfa_object.$extra].pageNumber;
+            const pageNumber = this[_symbol_utils.$getTemplateRoot]()[_symbol_utils.$extra].pageNumber;
             const parity = pageNumber % 2 === 0 ? "even" : "odd";
             const position = pageNumber === 0 ? "first" : "rest";
             let page = this.pageArea.children.find(p => p.oddOrEven === parity && p.pagePosition === position);
@@ -50978,7 +49876,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             });
             this.hyphenation = null;
           }
-          [_xfa_object.$toStyle]() {
+          [_symbol_utils.$toStyle]() {
             const style = (0, _html_utils.toStyle)(this, "hAlign");
             if (this.marginLeft !== "") {
               style.paddingLeft = (0, _html_utils.measureToString)(this.marginLeft);
@@ -51004,7 +49902,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             }
             if (this.tabStops.length > 0) { }
             if (this.hyphenatation) {
-              Object.assign(style, this.hyphenatation[_xfa_object.$toStyle]());
+              Object.assign(style, this.hyphenatation[_symbol_utils.$toStyle]());
             }
             return style;
           }
@@ -51032,9 +49930,9 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.color = null;
             this.extras = null;
           }
-          [_xfa_object.$toStyle](startColor) {
-            startColor = startColor ? startColor[_xfa_object.$toStyle]() : "#FFFFFF";
-            const endColor = this.color ? this.color[_xfa_object.$toStyle]() : "#000000";
+          [_symbol_utils.$toStyle](startColor) {
+            startColor = startColor ? startColor[_symbol_utils.$toStyle]() : "#FFFFFF";
+            const endColor = this.color ? this.color[_symbol_utils.$toStyle]() : "#000000";
             const width = 5;
             const cmd = "repeating-linear-gradient";
             const colors = `${startColor},${startColor} ${width}px,${endColor} ${width}px,${endColor} ${2 * width}px`;
@@ -51188,9 +50086,9 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.color = null;
             this.extras = null;
           }
-          [_xfa_object.$toStyle](startColor) {
-            startColor = startColor ? startColor[_xfa_object.$toStyle]() : "#FFFFFF";
-            const endColor = this.color ? this.color[_xfa_object.$toStyle]() : "#000000";
+          [_symbol_utils.$toStyle](startColor) {
+            startColor = startColor ? startColor[_symbol_utils.$toStyle]() : "#FFFFFF";
+            const endColor = this.color ? this.color[_symbol_utils.$toStyle]() : "#000000";
             const colors = this.type === "toEdge" ? `${startColor},${endColor}` : `${endColor},${startColor}`;
             return `radial-gradient(circle at center, ${colors})`;
           }
@@ -51225,19 +50123,19 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.edge = new _xfa_object.XFAObjectArray(4);
             this.fill = null;
           }
-          [_xfa_object.$toHTML]() {
+          [_symbol_utils.$toHTML]() {
             const edge = this.edge.children.length ? this.edge.children[0] : new Edge({});
-            const edgeStyle = edge[_xfa_object.$toStyle]();
+            const edgeStyle = edge[_symbol_utils.$toStyle]();
             const style = Object.create(null);
             if (this.fill?.presence === "visible") {
-              Object.assign(style, this.fill[_xfa_object.$toStyle]());
+              Object.assign(style, this.fill[_symbol_utils.$toStyle]());
             } else {
               style.fill = "transparent";
             }
             style.strokeWidth = (0, _html_utils.measureToString)(edge.presence === "visible" ? edge.thickness : 0);
             style.stroke = edgeStyle.color;
             const corner = this.corner.children.length ? this.corner.children[0] : new Corner({});
-            const cornerStyle = corner[_xfa_object.$toStyle]();
+            const cornerStyle = corner[_symbol_utils.$toStyle]();
             const rect = {
               name: "rect",
               attributes: {
@@ -51263,7 +50161,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 height: "100%"
               }
             };
-            const parent = this[_xfa_object.$getParent]()[_xfa_object.$getParent]();
+            const parent = this[_symbol_utils.$getParent]()[_symbol_utils.$getParent]();
             if (hasMargin(parent)) {
               return _utils.HTMLResult.success({
                 name: "div",
@@ -51355,8 +50253,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.usehref = attributes.usehref || "";
             this.extras = null;
           }
-          [_xfa_object.$toStyle](startColor) {
-            return startColor ? startColor[_xfa_object.$toStyle]() : "#FFFFFF";
+          [_symbol_utils.$toStyle](startColor) {
+            return startColor ? startColor[_symbol_utils.$toStyle]() : "#FFFFFF";
           }
         }
         class Speak extends _xfa_object.StringObject {
@@ -51388,7 +50286,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.color = null;
             this.extras = null;
           }
-          [_xfa_object.$toStyle](bgColor) {
+          [_symbol_utils.$toStyle](bgColor) {
             const alpha = this.rate / 100;
             return _util.Util.makeHexColor(Math.round(bgColor.value.r * (1 - alpha) + this.value.r * alpha), Math.round(bgColor.value.g * (1 - alpha) + this.value.g * alpha), Math.round(bgColor.value.b * (1 - alpha) + this.value.b * alpha));
           }
@@ -51460,54 +50358,54 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.subform = new _xfa_object.XFAObjectArray();
             this.subformSet = new _xfa_object.XFAObjectArray();
           }
-          [_xfa_object.$getSubformParent]() {
-            const parent = this[_xfa_object.$getParent]();
+          [_symbol_utils.$getSubformParent]() {
+            const parent = this[_symbol_utils.$getParent]();
             if (parent instanceof SubformSet) {
-              return parent[_xfa_object.$getSubformParent]();
+              return parent[_symbol_utils.$getSubformParent]();
             }
             return parent;
           }
-          [_xfa_object.$isBindable]() {
+          [_symbol_utils.$isBindable]() {
             return true;
           }
-          [_xfa_object.$isThereMoreWidth]() {
-            return this.layout.endsWith("-tb") && this[_xfa_object.$extra].attempt === 0 && this[_xfa_object.$extra].numberInLine > 0 || this[_xfa_object.$getParent]()[_xfa_object.$isThereMoreWidth]();
+          [_symbol_utils.$isThereMoreWidth]() {
+            return this.layout.endsWith("-tb") && this[_symbol_utils.$extra].attempt === 0 && this[_symbol_utils.$extra].numberInLine > 0 || this[_symbol_utils.$getParent]()[_symbol_utils.$isThereMoreWidth]();
           }
-          *[_xfa_object.$getContainedChildren]() {
+          *[_symbol_utils.$getContainedChildren]() {
             yield* getContainedChildren(this);
           }
-          [_xfa_object.$flushHTML]() {
+          [_symbol_utils.$flushHTML]() {
             return (0, _layout.flushHTML)(this);
           }
-          [_xfa_object.$addHTML](html, bbox) {
+          [_symbol_utils.$addHTML](html, bbox) {
             (0, _layout.addHTML)(this, html, bbox);
           }
-          [_xfa_object.$getAvailableSpace]() {
+          [_symbol_utils.$getAvailableSpace]() {
             return (0, _layout.getAvailableSpace)(this);
           }
-          [_xfa_object.$isSplittable]() {
-            const parent = this[_xfa_object.$getSubformParent]();
-            if (!parent[_xfa_object.$isSplittable]()) {
+          [_symbol_utils.$isSplittable]() {
+            const parent = this[_symbol_utils.$getSubformParent]();
+            if (!parent[_symbol_utils.$isSplittable]()) {
               return false;
             }
-            if (this[_xfa_object.$extra]._isSplittable !== undefined) {
-              return this[_xfa_object.$extra]._isSplittable;
+            if (this[_symbol_utils.$extra]._isSplittable !== undefined) {
+              return this[_symbol_utils.$extra]._isSplittable;
             }
             if (this.layout === "position" || this.layout.includes("row")) {
-              this[_xfa_object.$extra]._isSplittable = false;
+              this[_symbol_utils.$extra]._isSplittable = false;
               return false;
             }
             if (this.keep && this.keep.intact !== "none") {
-              this[_xfa_object.$extra]._isSplittable = false;
+              this[_symbol_utils.$extra]._isSplittable = false;
               return false;
             }
-            if (parent.layout?.endsWith("-tb") && parent[_xfa_object.$extra].numberInLine !== 0) {
+            if (parent.layout?.endsWith("-tb") && parent[_symbol_utils.$extra].numberInLine !== 0) {
               return false;
             }
-            this[_xfa_object.$extra]._isSplittable = true;
+            this[_symbol_utils.$extra]._isSplittable = true;
             return true;
           }
-          [_xfa_object.$toHTML](availableSpace) {
+          [_symbol_utils.$toHTML](availableSpace) {
             setTabIndex(this);
             if (this.break) {
               if (this.break.after !== "auto" || this.break.afterTarget !== "") {
@@ -51516,8 +50414,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                   target: this.break.afterTarget,
                   startNew: this.break.startNew.toString()
                 });
-                node[_xfa_object.$globalData] = this[_xfa_object.$globalData];
-                this[_xfa_object.$appendChild](node);
+                node[_symbol_utils.$globalData] = this[_symbol_utils.$globalData];
+                this[_symbol_utils.$appendChild](node);
                 this.breakAfter.push(node);
               }
               if (this.break.before !== "auto" || this.break.beforeTarget !== "") {
@@ -51526,8 +50424,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                   target: this.break.beforeTarget,
                   startNew: this.break.startNew.toString()
                 });
-                node[_xfa_object.$globalData] = this[_xfa_object.$globalData];
-                this[_xfa_object.$appendChild](node);
+                node[_symbol_utils.$globalData] = this[_symbol_utils.$globalData];
+                this[_symbol_utils.$appendChild](node);
                 this.breakBefore.push(node);
               }
               if (this.break.overflowTarget !== "") {
@@ -51536,11 +50434,11 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                   leader: this.break.overflowLeader,
                   trailer: this.break.overflowTrailer
                 });
-                node[_xfa_object.$globalData] = this[_xfa_object.$globalData];
-                this[_xfa_object.$appendChild](node);
+                node[_symbol_utils.$globalData] = this[_symbol_utils.$globalData];
+                this[_symbol_utils.$appendChild](node);
                 this.overflow.push(node);
               }
-              this[_xfa_object.$removeChild](this.break);
+              this[_symbol_utils.$removeChild](this.break);
               this.break = null;
             }
             if (this.presence === "hidden" || this.presence === "inactive") {
@@ -51555,20 +50453,20 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 return _utils.HTMLResult.breakNode(breakBefore);
               }
             }
-            if (this[_xfa_object.$extra]?.afterBreakAfter) {
+            if (this[_symbol_utils.$extra]?.afterBreakAfter) {
               return _utils.HTMLResult.EMPTY;
             }
             (0, _html_utils.fixDimensions)(this);
             const children = [];
             const attributes = {
-              id: this[_xfa_object.$uid],
+              id: this[_symbol_utils.$uid],
               class: []
             };
             (0, _html_utils.setAccess)(this, attributes.class);
-            if (!this[_xfa_object.$extra]) {
-              this[_xfa_object.$extra] = Object.create(null);
+            if (!this[_symbol_utils.$extra]) {
+              this[_symbol_utils.$extra] = Object.create(null);
             }
-            Object.assign(this[_xfa_object.$extra], {
+            Object.assign(this[_symbol_utils.$extra], {
               children,
               line: null,
               attributes,
@@ -51583,9 +50481,9 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               prevHeight: 0,
               currentWidth: 0
             });
-            const root = this[_xfa_object.$getTemplateRoot]();
-            const savedNoLayoutFailure = root[_xfa_object.$extra].noLayoutFailure;
-            const isSplittable = this[_xfa_object.$isSplittable]();
+            const root = this[_symbol_utils.$getTemplateRoot]();
+            const savedNoLayoutFailure = root[_symbol_utils.$extra].noLayoutFailure;
+            const isSplittable = this[_symbol_utils.$isSplittable]();
             if (!isSplittable) {
               setFirstUnsplittable(this);
             }
@@ -51594,10 +50492,10 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             }
             const filter = new Set(["area", "draw", "exclGroup", "field", "subform", "subformSet"]);
             if (this.layout.includes("row")) {
-              const columnWidths = this[_xfa_object.$getSubformParent]().columnWidths;
+              const columnWidths = this[_symbol_utils.$getSubformParent]().columnWidths;
               if (Array.isArray(columnWidths) && columnWidths.length > 0) {
-                this[_xfa_object.$extra].columnWidths = columnWidths;
-                this[_xfa_object.$extra].currentColumn = 0;
+                this[_symbol_utils.$extra].columnWidths = columnWidths;
+                this[_symbol_utils.$extra].currentColumn = 0;
               }
             }
             const style = (0, _html_utils.toStyle)(this, "anchorType", "dimensions", "position", "presence", "border", "margin", "hAlign");
@@ -51612,20 +50510,20 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               attributes.xfaName = this.name;
             }
             if (this.overflow) {
-              const overflowExtra = this.overflow[_xfa_object.$getExtra]();
+              const overflowExtra = this.overflow[_symbol_utils.$getExtra]();
               if (overflowExtra.addLeader) {
                 overflowExtra.addLeader = false;
                 handleOverflow(this, overflowExtra.leader, availableSpace);
               }
             }
-            this[_xfa_object.$pushPara]();
+            this[_symbol_utils.$pushPara]();
             const isLrTb = this.layout === "lr-tb" || this.layout === "rl-tb";
             const maxRun = isLrTb ? MAX_ATTEMPTS_FOR_LRTB_LAYOUT : 1;
-            for (; this[_xfa_object.$extra].attempt < maxRun; this[_xfa_object.$extra].attempt++) {
-              if (isLrTb && this[_xfa_object.$extra].attempt === MAX_ATTEMPTS_FOR_LRTB_LAYOUT - 1) {
-                this[_xfa_object.$extra].numberInLine = 0;
+            for (; this[_symbol_utils.$extra].attempt < maxRun; this[_symbol_utils.$extra].attempt++) {
+              if (isLrTb && this[_symbol_utils.$extra].attempt === MAX_ATTEMPTS_FOR_LRTB_LAYOUT - 1) {
+                this[_symbol_utils.$extra].numberInLine = 0;
               }
-              const result = this[_xfa_object.$childrenToHTML]({
+              const result = this[_symbol_utils.$childrenToHTML]({
                 filter,
                 include: true
               });
@@ -51633,30 +50531,30 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 break;
               }
               if (result.isBreak()) {
-                this[_xfa_object.$popPara]();
+                this[_symbol_utils.$popPara]();
                 return result;
               }
-              if (isLrTb && this[_xfa_object.$extra].attempt === 0 && this[_xfa_object.$extra].numberInLine === 0 && !root[_xfa_object.$extra].noLayoutFailure) {
-                this[_xfa_object.$extra].attempt = maxRun;
+              if (isLrTb && this[_symbol_utils.$extra].attempt === 0 && this[_symbol_utils.$extra].numberInLine === 0 && !root[_symbol_utils.$extra].noLayoutFailure) {
+                this[_symbol_utils.$extra].attempt = maxRun;
                 break;
               }
             }
-            this[_xfa_object.$popPara]();
+            this[_symbol_utils.$popPara]();
             if (!isSplittable) {
               unsetFirstUnsplittable(this);
             }
-            root[_xfa_object.$extra].noLayoutFailure = savedNoLayoutFailure;
-            if (this[_xfa_object.$extra].attempt === maxRun) {
+            root[_symbol_utils.$extra].noLayoutFailure = savedNoLayoutFailure;
+            if (this[_symbol_utils.$extra].attempt === maxRun) {
               if (this.overflow) {
-                this[_xfa_object.$getTemplateRoot]()[_xfa_object.$extra].overflowNode = this.overflow;
+                this[_symbol_utils.$getTemplateRoot]()[_symbol_utils.$extra].overflowNode = this.overflow;
               }
               if (!isSplittable) {
-                delete this[_xfa_object.$extra];
+                delete this[_symbol_utils.$extra];
               }
               return _utils.HTMLResult.FAILURE;
             }
             if (this.overflow) {
-              const overflowExtra = this.overflow[_xfa_object.$getExtra]();
+              const overflowExtra = this.overflow[_symbol_utils.$getExtra]();
               if (overflowExtra.addTrailer) {
                 overflowExtra.addTrailer = false;
                 handleOverflow(this, overflowExtra.trailer, availableSpace);
@@ -51668,8 +50566,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               marginH = this.margin.leftInset + this.margin.rightInset;
               marginV = this.margin.topInset + this.margin.bottomInset;
             }
-            const width = Math.max(this[_xfa_object.$extra].width + marginH, this.w || 0);
-            const height = Math.max(this[_xfa_object.$extra].height + marginV, this.h || 0);
+            const width = Math.max(this[_symbol_utils.$extra].width + marginH, this.w || 0);
+            const height = Math.max(this[_symbol_utils.$extra].height + marginV, this.h || 0);
             const bbox = [this.x, this.y, width, height];
             if (this.w === "") {
               style.width = (0, _html_utils.measureToString)(width);
@@ -51690,11 +50588,11 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             if (this.breakAfter.children.length >= 1) {
               const breakAfter = this.breakAfter.children[0];
               if (handleBreak(breakAfter)) {
-                this[_xfa_object.$extra].afterBreakAfter = result;
+                this[_symbol_utils.$extra].afterBreakAfter = result;
                 return _utils.HTMLResult.breakNode(breakAfter);
               }
             }
-            delete this[_xfa_object.$extra];
+            delete this[_symbol_utils.$extra];
             return result;
           }
         }
@@ -51718,17 +50616,17 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.subform = new _xfa_object.XFAObjectArray();
             this.subformSet = new _xfa_object.XFAObjectArray();
           }
-          *[_xfa_object.$getContainedChildren]() {
+          *[_symbol_utils.$getContainedChildren]() {
             yield* getContainedChildren(this);
           }
-          [_xfa_object.$getSubformParent]() {
-            let parent = this[_xfa_object.$getParent]();
+          [_symbol_utils.$getSubformParent]() {
+            let parent = this[_symbol_utils.$getParent]();
             while (!(parent instanceof Subform)) {
-              parent = parent[_xfa_object.$getParent]();
+              parent = parent[_symbol_utils.$getParent]();
             }
             return parent;
           }
-          [_xfa_object.$isBindable]() {
+          [_symbol_utils.$isBindable]() {
             return true;
           }
         }
@@ -51741,8 +50639,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.use = attributes.use || "";
             this.usehref = attributes.usehref || "";
           }
-          [_xfa_object.$finalize]() {
-            this[_xfa_object.$content] = new Map(this[_xfa_object.$content].split(this.delimiter).map(kv => {
+          [_symbol_utils.$finalize]() {
+            this[_symbol_utils.$content] = new Map(this[_symbol_utils.$content].split(this.delimiter).map(kv => {
               kv = kv.split("=", 2);
               kv[0] = kv[0].trim();
               return kv;
@@ -51790,32 +50688,32 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.extras = null;
             this.subform = new _xfa_object.XFAObjectArray();
           }
-          [_xfa_object.$finalize]() {
+          [_symbol_utils.$finalize]() {
             if (this.subform.children.length === 0) {
               (0, _util.warn)("XFA - No subforms in template node.");
             }
             if (this.subform.children.length >= 2) {
               (0, _util.warn)("XFA - Several subforms in template node: please file a bug.");
             }
-            this[_xfa_object.$tabIndex] = DEFAULT_TAB_INDEX;
+            this[_symbol_utils.$tabIndex] = DEFAULT_TAB_INDEX;
           }
-          [_xfa_object.$isSplittable]() {
+          [_symbol_utils.$isSplittable]() {
             return true;
           }
-          [_xfa_object.$searchNode](expr, container) {
+          [_symbol_utils.$searchNode](expr, container) {
             if (expr.startsWith("#")) {
-              return [this[_xfa_object.$ids].get(expr.slice(1))];
+              return [this[_symbol_utils.$ids].get(expr.slice(1))];
             }
             return (0, _som.searchNode)(this, container, expr, true, true);
           }
-          *[_xfa_object.$toPages]() {
+          *[_symbol_utils.$toPages]() {
             if (!this.subform.children.length) {
               return _utils.HTMLResult.success({
                 name: "div",
                 children: []
               });
             }
-            this[_xfa_object.$extra] = {
+            this[_symbol_utils.$extra] = {
               overflowNode: null,
               firstUnsplittable: null,
               currentContentArea: null,
@@ -51828,7 +50726,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               paraStack: []
             };
             const root = this.subform.children[0];
-            root.pageSet[_xfa_object.$cleanPage]();
+            root.pageSet[_symbol_utils.$cleanPage]();
             const pageAreas = root.pageSet.pageArea.children;
             const mainHtml = {
               name: "div",
@@ -51851,20 +50749,20 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               breakBeforeTarget = breakBefore.beforeTarget;
             }
             if (breakBefore) {
-              const target = this[_xfa_object.$searchNode](breakBeforeTarget, breakBefore[_xfa_object.$getParent]());
+              const target = this[_symbol_utils.$searchNode](breakBeforeTarget, breakBefore[_symbol_utils.$getParent]());
               if (target instanceof PageArea) {
                 pageArea = target;
-                breakBefore[_xfa_object.$extra] = {};
+                breakBefore[_symbol_utils.$extra] = {};
               }
             }
             if (!pageArea) {
               pageArea = pageAreas[0];
             }
-            pageArea[_xfa_object.$extra] = {
+            pageArea[_symbol_utils.$extra] = {
               numberOfUse: 1
             };
-            const pageAreaParent = pageArea[_xfa_object.$getParent]();
-            pageAreaParent[_xfa_object.$extra] = {
+            const pageAreaParent = pageArea[_symbol_utils.$getParent]();
+            pageAreaParent[_symbol_utils.$extra] = {
               numberOfUse: 1,
               pageIndex: pageAreaParent.pageArea.children.indexOf(pageArea),
               pageSetIndex: 0
@@ -51886,47 +50784,47 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 hasSomethingCounter = 0;
               }
               targetPageArea = null;
-              this[_xfa_object.$extra].currentPageArea = pageArea;
-              const page = pageArea[_xfa_object.$toHTML]().html;
+              this[_symbol_utils.$extra].currentPageArea = pageArea;
+              const page = pageArea[_symbol_utils.$toHTML]().html;
               mainHtml.children.push(page);
               if (leader) {
-                this[_xfa_object.$extra].noLayoutFailure = true;
-                page.children.push(leader[_xfa_object.$toHTML](pageArea[_xfa_object.$extra].space).html);
+                this[_symbol_utils.$extra].noLayoutFailure = true;
+                page.children.push(leader[_symbol_utils.$toHTML](pageArea[_symbol_utils.$extra].space).html);
                 leader = null;
               }
               if (trailer) {
-                this[_xfa_object.$extra].noLayoutFailure = true;
-                page.children.push(trailer[_xfa_object.$toHTML](pageArea[_xfa_object.$extra].space).html);
+                this[_symbol_utils.$extra].noLayoutFailure = true;
+                page.children.push(trailer[_symbol_utils.$toHTML](pageArea[_symbol_utils.$extra].space).html);
                 trailer = null;
               }
               const contentAreas = pageArea.contentArea.children;
               const htmlContentAreas = page.children.filter(node => node.attributes.class.includes("xfaContentarea"));
               hasSomething = false;
-              this[_xfa_object.$extra].firstUnsplittable = null;
-              this[_xfa_object.$extra].noLayoutFailure = false;
+              this[_symbol_utils.$extra].firstUnsplittable = null;
+              this[_symbol_utils.$extra].noLayoutFailure = false;
               const flush = index => {
-                const html = root[_xfa_object.$flushHTML]();
+                const html = root[_symbol_utils.$flushHTML]();
                 if (html) {
                   hasSomething ||= html.children?.length > 0;
                   htmlContentAreas[index].children.push(html);
                 }
               };
               for (let i = startIndex, ii = contentAreas.length; i < ii; i++) {
-                const contentArea = this[_xfa_object.$extra].currentContentArea = contentAreas[i];
+                const contentArea = this[_symbol_utils.$extra].currentContentArea = contentAreas[i];
                 const space = {
                   width: contentArea.w,
                   height: contentArea.h
                 };
                 startIndex = 0;
                 if (leader) {
-                  htmlContentAreas[i].children.push(leader[_xfa_object.$toHTML](space).html);
+                  htmlContentAreas[i].children.push(leader[_symbol_utils.$toHTML](space).html);
                   leader = null;
                 }
                 if (trailer) {
-                  htmlContentAreas[i].children.push(trailer[_xfa_object.$toHTML](space).html);
+                  htmlContentAreas[i].children.push(trailer[_symbol_utils.$toHTML](space).html);
                   trailer = null;
                 }
-                const html = root[_xfa_object.$toHTML](space);
+                const html = root[_symbol_utils.$toHTML](space);
                 if (html.success) {
                   if (html.html) {
                     hasSomething ||= html.html.children?.length > 0;
@@ -51943,29 +50841,29 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                     continue;
                   }
                   if (node.leader) {
-                    leader = this[_xfa_object.$searchNode](node.leader, node[_xfa_object.$getParent]());
+                    leader = this[_symbol_utils.$searchNode](node.leader, node[_symbol_utils.$getParent]());
                     leader = leader ? leader[0] : null;
                   }
                   if (node.trailer) {
-                    trailer = this[_xfa_object.$searchNode](node.trailer, node[_xfa_object.$getParent]());
+                    trailer = this[_symbol_utils.$searchNode](node.trailer, node[_symbol_utils.$getParent]());
                     trailer = trailer ? trailer[0] : null;
                   }
                   if (node.targetType === "pageArea") {
-                    targetPageArea = node[_xfa_object.$extra].target;
+                    targetPageArea = node[_symbol_utils.$extra].target;
                     i = Infinity;
-                  } else if (!node[_xfa_object.$extra].target) {
-                    i = node[_xfa_object.$extra].index;
+                  } else if (!node[_symbol_utils.$extra].target) {
+                    i = node[_symbol_utils.$extra].index;
                   } else {
-                    targetPageArea = node[_xfa_object.$extra].target;
-                    startIndex = node[_xfa_object.$extra].index + 1;
+                    targetPageArea = node[_symbol_utils.$extra].target;
+                    startIndex = node[_symbol_utils.$extra].index + 1;
                     i = Infinity;
                   }
                   continue;
                 }
-                if (this[_xfa_object.$extra].overflowNode) {
-                  const node = this[_xfa_object.$extra].overflowNode;
-                  this[_xfa_object.$extra].overflowNode = null;
-                  const overflowExtra = node[_xfa_object.$getExtra]();
+                if (this[_symbol_utils.$extra].overflowNode) {
+                  const node = this[_symbol_utils.$extra].overflowNode;
+                  this[_symbol_utils.$extra].overflowNode = null;
+                  const overflowExtra = node[_symbol_utils.$getExtra]();
                   const target = overflowExtra.target;
                   overflowExtra.addLeader = overflowExtra.leader !== null;
                   overflowExtra.addTrailer = overflowExtra.trailer !== null;
@@ -51983,7 +50881,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                         startIndex = index;
                       }
                     } else {
-                      targetPageArea = target[_xfa_object.$getParent]();
+                      targetPageArea = target[_symbol_utils.$getParent]();
                       startIndex = targetPageArea.contentArea.children.indexOf(target);
                     }
                   }
@@ -51991,15 +50889,15 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 }
                 flush(i);
               }
-              this[_xfa_object.$extra].pageNumber += 1;
+              this[_symbol_utils.$extra].pageNumber += 1;
               if (targetPageArea) {
-                if (targetPageArea[_xfa_object.$isUsable]()) {
-                  targetPageArea[_xfa_object.$extra].numberOfUse += 1;
+                if (targetPageArea[_symbol_utils.$isUsable]()) {
+                  targetPageArea[_symbol_utils.$extra].numberOfUse += 1;
                 } else {
                   targetPageArea = null;
                 }
               }
-              pageArea = targetPageArea || pageArea[_xfa_object.$getNextPage]();
+              pageArea = targetPageArea || pageArea[_symbol_utils.$getNextPage]();
               yield null;
             }
           }
@@ -52019,46 +50917,46 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.use = attributes.use || "";
             this.usehref = attributes.usehref || "";
           }
-          [_xfa_object.$acceptWhitespace]() {
+          [_symbol_utils.$acceptWhitespace]() {
             return true;
           }
-          [_xfa_object.$onChild](child) {
-            if (child[_xfa_object.$namespaceId] === _namespaces.NamespaceIds.xhtml.id) {
-              this[_xfa_object.$content] = child;
+          [_symbol_utils.$onChild](child) {
+            if (child[_symbol_utils.$namespaceId] === _namespaces.NamespaceIds.xhtml.id) {
+              this[_symbol_utils.$content] = child;
               return true;
             }
-            (0, _util.warn)(`XFA - Invalid content in Text: ${child[_xfa_object.$nodeName]}.`);
+            (0, _util.warn)(`XFA - Invalid content in Text: ${child[_symbol_utils.$nodeName]}.`);
             return false;
           }
-          [_xfa_object.$onText](str) {
-            if (this[_xfa_object.$content] instanceof _xfa_object.XFAObject) {
+          [_symbol_utils.$onText](str) {
+            if (this[_symbol_utils.$content] instanceof _xfa_object.XFAObject) {
               return;
             }
-            super[_xfa_object.$onText](str);
+            super[_symbol_utils.$onText](str);
           }
-          [_xfa_object.$finalize]() {
-            if (typeof this[_xfa_object.$content] === "string") {
-              this[_xfa_object.$content] = this[_xfa_object.$content].replaceAll("\r\n", "\n");
+          [_symbol_utils.$finalize]() {
+            if (typeof this[_symbol_utils.$content] === "string") {
+              this[_symbol_utils.$content] = this[_symbol_utils.$content].replaceAll("\r\n", "\n");
             }
           }
-          [_xfa_object.$getExtra]() {
-            if (typeof this[_xfa_object.$content] === "string") {
-              return this[_xfa_object.$content].split(/[\u2029\u2028\n]/).reduce((acc, line) => {
+          [_symbol_utils.$getExtra]() {
+            if (typeof this[_symbol_utils.$content] === "string") {
+              return this[_symbol_utils.$content].split(/[\u2029\u2028\n]/).reduce((acc, line) => {
                 if (line) {
                   acc.push(line);
                 }
                 return acc;
               }, []).join("\n");
             }
-            return this[_xfa_object.$content][_xfa_object.$text]();
+            return this[_symbol_utils.$content][_symbol_utils.$text]();
           }
-          [_xfa_object.$toHTML](availableSpace) {
-            if (typeof this[_xfa_object.$content] === "string") {
-              const html = valueToHtml(this[_xfa_object.$content]).html;
-              if (this[_xfa_object.$content].includes("\u2029")) {
+          [_symbol_utils.$toHTML](availableSpace) {
+            if (typeof this[_symbol_utils.$content] === "string") {
+              const html = valueToHtml(this[_symbol_utils.$content]).html;
+              if (this[_symbol_utils.$content].includes("\u2029")) {
                 html.name = "div";
                 html.children = [];
-                this[_xfa_object.$content].split("\u2029").map(para => para.split(/[\u2028\n]/).reduce((acc, line) => {
+                this[_symbol_utils.$content].split("\u2029").map(para => para.split(/[\u2028\n]/).reduce((acc, line) => {
                   acc.push({
                     name: "span",
                     value: line
@@ -52072,10 +50970,10 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                     children: lines
                   });
                 });
-              } else if (/[\u2028\n]/.test(this[_xfa_object.$content])) {
+              } else if (/[\u2028\n]/.test(this[_symbol_utils.$content])) {
                 html.name = "div";
                 html.children = [];
-                this[_xfa_object.$content].split(/[\u2028\n]/).forEach(line => {
+                this[_symbol_utils.$content].split(/[\u2028\n]/).forEach(line => {
                   html.children.push({
                     name: "span",
                     value: line
@@ -52086,7 +50984,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               }
               return _utils.HTMLResult.success(html);
             }
-            return this[_xfa_object.$content][_xfa_object.$toHTML](availableSpace);
+            return this[_symbol_utils.$content][_symbol_utils.$toHTML](availableSpace);
           }
         }
         exports.Text = Text;
@@ -52113,10 +51011,10 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.extras = null;
             this.margin = null;
           }
-          [_xfa_object.$toHTML](availableSpace) {
+          [_symbol_utils.$toHTML](availableSpace) {
             const style = (0, _html_utils.toStyle)(this, "border", "font", "margin");
             let html;
-            const field = this[_xfa_object.$getParent]()[_xfa_object.$getParent]();
+            const field = this[_symbol_utils.$getParent]()[_symbol_utils.$getParent]();
             if (this.multiLine === "") {
               this.multiLine = field instanceof Draw ? 1 : 0;
             }
@@ -52124,8 +51022,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               html = {
                 name: "textarea",
                 attributes: {
-                  dataId: field[_xfa_object.$data]?.[_xfa_object.$uid] || field[_xfa_object.$uid],
-                  fieldId: field[_xfa_object.$uid],
+                  dataId: field[_symbol_utils.$data]?.[_symbol_utils.$uid] || field[_symbol_utils.$uid],
+                  fieldId: field[_symbol_utils.$uid],
                   class: ["xfaTextfield"],
                   style,
                   "aria-label": ariaLabel(field),
@@ -52137,8 +51035,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 name: "input",
                 attributes: {
                   type: "text",
-                  dataId: field[_xfa_object.$data]?.[_xfa_object.$uid] || field[_xfa_object.$uid],
-                  fieldId: field[_xfa_object.$uid],
+                  dataId: field[_symbol_utils.$data]?.[_symbol_utils.$uid] || field[_symbol_utils.$uid],
+                  fieldId: field[_symbol_utils.$uid],
                   class: ["xfaTextfield"],
                   style,
                   "aria-label": ariaLabel(field),
@@ -52167,12 +51065,12 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.use = attributes.use || "";
             this.usehref = attributes.usehref || "";
           }
-          [_xfa_object.$finalize]() {
-            const date = this[_xfa_object.$content].trim();
-            this[_xfa_object.$content] = date ? new Date(date) : null;
+          [_symbol_utils.$finalize]() {
+            const date = this[_symbol_utils.$content].trim();
+            this[_symbol_utils.$content] = date ? new Date(date) : null;
           }
-          [_xfa_object.$toHTML](availableSpace) {
-            return valueToHtml(this[_xfa_object.$content] ? this[_xfa_object.$content].toString() : "");
+          [_symbol_utils.$toHTML](availableSpace) {
+            return valueToHtml(this[_symbol_utils.$content] ? this[_symbol_utils.$content].toString() : "");
           }
         }
         class TimeStamp extends _xfa_object.XFAObject {
@@ -52218,7 +51116,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           get name() {
             return this.operation;
           }
-          [_xfa_object.$isTransparent]() {
+          [_symbol_utils.$isTransparent]() {
             return false;
           }
         }
@@ -52242,8 +51140,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.signature = null;
             this.textEdit = null;
           }
-          [_xfa_object.$getExtra]() {
-            if (this[_xfa_object.$extra] === undefined) {
+          [_symbol_utils.$getExtra]() {
+            if (this[_symbol_utils.$extra] === undefined) {
               for (const name of Object.getOwnPropertyNames(this)) {
                 if (name === "extras" || name === "picture") {
                   continue;
@@ -52252,17 +51150,17 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 if (!(obj instanceof _xfa_object.XFAObject)) {
                   continue;
                 }
-                this[_xfa_object.$extra] = obj;
+                this[_symbol_utils.$extra] = obj;
                 return obj;
               }
-              this[_xfa_object.$extra] = null;
+              this[_symbol_utils.$extra] = null;
             }
-            return this[_xfa_object.$extra];
+            return this[_symbol_utils.$extra];
           }
-          [_xfa_object.$toHTML](availableSpace) {
-            const obj = this[_xfa_object.$getExtra]();
+          [_symbol_utils.$toHTML](availableSpace) {
+            const obj = this[_symbol_utils.$getExtra]();
             if (obj) {
-              return obj[_xfa_object.$toHTML](availableSpace);
+              return obj[_symbol_utils.$toHTML](availableSpace);
             }
             return _utils.HTMLResult.EMPTY;
           }
@@ -52308,39 +51206,39 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.text = null;
             this.time = null;
           }
-          [_xfa_object.$setValue](value) {
-            const parent = this[_xfa_object.$getParent]();
+          [_symbol_utils.$setValue](value) {
+            const parent = this[_symbol_utils.$getParent]();
             if (parent instanceof Field) {
               if (parent.ui?.imageEdit) {
                 if (!this.image) {
                   this.image = new Image({});
-                  this[_xfa_object.$appendChild](this.image);
+                  this[_symbol_utils.$appendChild](this.image);
                 }
-                this.image[_xfa_object.$content] = value[_xfa_object.$content];
+                this.image[_symbol_utils.$content] = value[_symbol_utils.$content];
                 return;
               }
             }
-            const valueName = value[_xfa_object.$nodeName];
+            const valueName = value[_symbol_utils.$nodeName];
             if (this[valueName] !== null) {
-              this[valueName][_xfa_object.$content] = value[_xfa_object.$content];
+              this[valueName][_symbol_utils.$content] = value[_symbol_utils.$content];
               return;
             }
             for (const name of Object.getOwnPropertyNames(this)) {
               const obj = this[name];
               if (obj instanceof _xfa_object.XFAObject) {
                 this[name] = null;
-                this[_xfa_object.$removeChild](obj);
+                this[_symbol_utils.$removeChild](obj);
               }
             }
-            this[value[_xfa_object.$nodeName]] = value;
-            this[_xfa_object.$appendChild](value);
+            this[value[_symbol_utils.$nodeName]] = value;
+            this[_symbol_utils.$appendChild](value);
           }
-          [_xfa_object.$text]() {
+          [_symbol_utils.$text]() {
             if (this.exData) {
-              if (typeof this.exData[_xfa_object.$content] === "string") {
-                return this.exData[_xfa_object.$content].trim();
+              if (typeof this.exData[_symbol_utils.$content] === "string") {
+                return this.exData[_symbol_utils.$content].trim();
               }
-              return this.exData[_xfa_object.$content][_xfa_object.$text]().trim();
+              return this.exData[_symbol_utils.$content][_symbol_utils.$text]().trim();
             }
             for (const name of Object.getOwnPropertyNames(this)) {
               if (name === "image") {
@@ -52348,18 +51246,18 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               }
               const obj = this[name];
               if (obj instanceof _xfa_object.XFAObject) {
-                return (obj[_xfa_object.$content] || "").toString().trim();
+                return (obj[_symbol_utils.$content] || "").toString().trim();
               }
             }
             return null;
           }
-          [_xfa_object.$toHTML](availableSpace) {
+          [_symbol_utils.$toHTML](availableSpace) {
             for (const name of Object.getOwnPropertyNames(this)) {
               const obj = this[name];
               if (!(obj instanceof _xfa_object.XFAObject)) {
                 continue;
               }
-              return obj[_xfa_object.$toHTML](availableSpace);
+              return obj[_symbol_utils.$toHTML](availableSpace);
             }
             return _utils.HTMLResult.EMPTY;
           }
@@ -52384,7 +51282,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.text = new _xfa_object.XFAObjectArray();
             this.time = new _xfa_object.XFAObjectArray();
           }
-          [_xfa_object.$isTransparent]() {
+          [_symbol_utils.$isTransparent]() {
             return true;
           }
         }
@@ -52392,7 +51290,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           static [_namespaces.$buildXFAObject](name, attributes) {
             if (TemplateNamespace.hasOwnProperty(name)) {
               const node = TemplateNamespace[name](attributes);
-              node[_xfa_object.$setSetAttributes](attributes);
+              node[_symbol_utils.$setSetAttributes](attributes);
               return node;
             }
             return undefined;
@@ -52741,7 +51639,84 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
 
         /***/
 }),
-/* 84 */
+/* 81 */
+/***/ ((__unused_webpack_module, exports) => {
+
+
+
+        Object.defineProperty(exports, "__esModule", ({
+          value: true
+        }));
+        exports.NamespaceIds = exports.$buildXFAObject = void 0;
+        const $buildXFAObject = Symbol();
+        exports.$buildXFAObject = $buildXFAObject;
+        const NamespaceIds = {
+          config: {
+            id: 0,
+            check: ns => ns.startsWith("http://www.xfa.org/schema/xci/")
+          },
+          connectionSet: {
+            id: 1,
+            check: ns => ns.startsWith("http://www.xfa.org/schema/xfa-connection-set/")
+          },
+          datasets: {
+            id: 2,
+            check: ns => ns.startsWith("http://www.xfa.org/schema/xfa-data/")
+          },
+          form: {
+            id: 3,
+            check: ns => ns.startsWith("http://www.xfa.org/schema/xfa-form/")
+          },
+          localeSet: {
+            id: 4,
+            check: ns => ns.startsWith("http://www.xfa.org/schema/xfa-locale-set/")
+          },
+          pdf: {
+            id: 5,
+            check: ns => ns === "http://ns.adobe.com/xdp/pdf/"
+          },
+          signature: {
+            id: 6,
+            check: ns => ns === "http://www.w3.org/2000/09/xmldsig#"
+          },
+          sourceSet: {
+            id: 7,
+            check: ns => ns.startsWith("http://www.xfa.org/schema/xfa-source-set/")
+          },
+          stylesheet: {
+            id: 8,
+            check: ns => ns === "http://www.w3.org/1999/XSL/Transform"
+          },
+          template: {
+            id: 9,
+            check: ns => ns.startsWith("http://www.xfa.org/schema/xfa-template/")
+          },
+          xdc: {
+            id: 10,
+            check: ns => ns.startsWith("http://www.xfa.org/schema/xdc/")
+          },
+          xdp: {
+            id: 11,
+            check: ns => ns === "http://ns.adobe.com/xdp/"
+          },
+          xfdf: {
+            id: 12,
+            check: ns => ns === "http://ns.adobe.com/xfdf/"
+          },
+          xhtml: {
+            id: 13,
+            check: ns => ns === "http://www.w3.org/1999/xhtml"
+          },
+          xmpmeta: {
+            id: 14,
+            check: ns => ns === "http://ns.adobe.com/xmpmeta/"
+          }
+        };
+        exports.NamespaceIds = NamespaceIds;
+
+        /***/
+}),
+/* 82 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -52753,8 +51728,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
         exports.checkDimensions = checkDimensions;
         exports.flushHTML = flushHTML;
         exports.getAvailableSpace = getAvailableSpace;
-        var _xfa_object = __w_pdfjs_require__(78);
-        var _html_utils = __w_pdfjs_require__(85);
+        var _symbol_utils = __w_pdfjs_require__(78);
+        var _html_utils = __w_pdfjs_require__(83);
         function createLine(node, children) {
           return {
             name: "div",
@@ -52765,17 +51740,17 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           };
         }
         function flushHTML(node) {
-          if (!node[_xfa_object.$extra]) {
+          if (!node[_symbol_utils.$extra]) {
             return null;
           }
-          const attributes = node[_xfa_object.$extra].attributes;
+          const attributes = node[_symbol_utils.$extra].attributes;
           const html = {
             name: "div",
             attributes,
-            children: node[_xfa_object.$extra].children
+            children: node[_symbol_utils.$extra].children
           };
-          if (node[_xfa_object.$extra].failingNode) {
-            const htmlFromFailing = node[_xfa_object.$extra].failingNode[_xfa_object.$flushHTML]();
+          if (node[_symbol_utils.$extra].failingNode) {
+            const htmlFromFailing = node[_symbol_utils.$extra].failingNode[_symbol_utils.$flushHTML]();
             if (htmlFromFailing) {
               if (node.layout.endsWith("-tb")) {
                 html.children.push(createLine(node, [htmlFromFailing]));
@@ -52790,7 +51765,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           return html;
         }
         function addHTML(node, html, bbox) {
-          const extra = node[_xfa_object.$extra];
+          const extra = node[_symbol_utils.$extra];
           const availableSpace = extra.availableSpace;
           const [x, y, w, h] = bbox;
           switch (node.layout) {
@@ -52850,25 +51825,25 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           }
         }
         function getAvailableSpace(node) {
-          const availableSpace = node[_xfa_object.$extra].availableSpace;
+          const availableSpace = node[_symbol_utils.$extra].availableSpace;
           const marginV = node.margin ? node.margin.topInset + node.margin.bottomInset : 0;
           const marginH = node.margin ? node.margin.leftInset + node.margin.rightInset : 0;
           switch (node.layout) {
             case "lr-tb":
             case "rl-tb":
-              if (node[_xfa_object.$extra].attempt === 0) {
+              if (node[_symbol_utils.$extra].attempt === 0) {
                 return {
-                  width: availableSpace.width - marginH - node[_xfa_object.$extra].currentWidth,
-                  height: availableSpace.height - marginV - node[_xfa_object.$extra].prevHeight
+                  width: availableSpace.width - marginH - node[_symbol_utils.$extra].currentWidth,
+                  height: availableSpace.height - marginV - node[_symbol_utils.$extra].prevHeight
                 };
               }
               return {
                 width: availableSpace.width - marginH,
-                height: availableSpace.height - marginV - node[_xfa_object.$extra].height
+                height: availableSpace.height - marginV - node[_symbol_utils.$extra].height
               };
             case "rl-row":
             case "row":
-              const width = node[_xfa_object.$extra].columnWidths.slice(node[_xfa_object.$extra].currentColumn).reduce((a, x) => a + x);
+              const width = node[_symbol_utils.$extra].columnWidths.slice(node[_symbol_utils.$extra].currentColumn).reduce((a, x) => a + x);
               return {
                 width,
                 height: availableSpace.height - marginH
@@ -52877,7 +51852,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             case "tb":
               return {
                 width: availableSpace.width - marginH,
-                height: availableSpace.height - marginV - node[_xfa_object.$extra].height
+                height: availableSpace.height - marginV - node[_symbol_utils.$extra].height
               };
             case "position":
             default:
@@ -52935,21 +51910,21 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           return [node.x + x + Math.min(0, w), node.y + y + Math.min(0, h), Math.abs(w), Math.abs(h)];
         }
         function checkDimensions(node, space) {
-          if (node[_xfa_object.$getTemplateRoot]()[_xfa_object.$extra].firstUnsplittable === null) {
+          if (node[_symbol_utils.$getTemplateRoot]()[_symbol_utils.$extra].firstUnsplittable === null) {
             return true;
           }
           if (node.w === 0 || node.h === 0) {
             return true;
           }
           const ERROR = 2;
-          const parent = node[_xfa_object.$getSubformParent]();
-          const attempt = parent[_xfa_object.$extra]?.attempt || 0;
+          const parent = node[_symbol_utils.$getSubformParent]();
+          const attempt = parent[_symbol_utils.$extra]?.attempt || 0;
           const [, y, w, h] = getTransformedBBox(node);
           switch (parent.layout) {
             case "lr-tb":
             case "rl-tb":
               if (attempt === 0) {
-                if (!node[_xfa_object.$getTemplateRoot]()[_xfa_object.$extra].noLayoutFailure) {
+                if (!node[_symbol_utils.$getTemplateRoot]()[_symbol_utils.$extra].noLayoutFailure) {
                   if (node.h !== "" && Math.round(h - space.height) > ERROR) {
                     return false;
                   }
@@ -52957,7 +51932,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                     if (Math.round(w - space.width) <= ERROR) {
                       return true;
                     }
-                    if (parent[_xfa_object.$extra].numberInLine === 0) {
+                    if (parent[_symbol_utils.$extra].numberInLine === 0) {
                       return space.height > ERROR;
                     }
                     return false;
@@ -52969,7 +51944,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 }
                 return space.width > ERROR;
               }
-              if (node[_xfa_object.$getTemplateRoot]()[_xfa_object.$extra].noLayoutFailure) {
+              if (node[_symbol_utils.$getTemplateRoot]()[_symbol_utils.$extra].noLayoutFailure) {
                 return true;
               }
               if (node.h !== "" && Math.round(h - space.height) > ERROR) {
@@ -52978,37 +51953,37 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               if (node.w === "" || Math.round(w - space.width) <= ERROR) {
                 return space.height > ERROR;
               }
-              if (parent[_xfa_object.$isThereMoreWidth]()) {
+              if (parent[_symbol_utils.$isThereMoreWidth]()) {
                 return false;
               }
               return space.height > ERROR;
             case "table":
             case "tb":
-              if (node[_xfa_object.$getTemplateRoot]()[_xfa_object.$extra].noLayoutFailure) {
+              if (node[_symbol_utils.$getTemplateRoot]()[_symbol_utils.$extra].noLayoutFailure) {
                 return true;
               }
-              if (node.h !== "" && !node[_xfa_object.$isSplittable]()) {
+              if (node.h !== "" && !node[_symbol_utils.$isSplittable]()) {
                 return Math.round(h - space.height) <= ERROR;
               }
               if (node.w === "" || Math.round(w - space.width) <= ERROR) {
                 return space.height > ERROR;
               }
-              if (parent[_xfa_object.$isThereMoreWidth]()) {
+              if (parent[_symbol_utils.$isThereMoreWidth]()) {
                 return false;
               }
               return space.height > ERROR;
             case "position":
-              if (node[_xfa_object.$getTemplateRoot]()[_xfa_object.$extra].noLayoutFailure) {
+              if (node[_symbol_utils.$getTemplateRoot]()[_symbol_utils.$extra].noLayoutFailure) {
                 return true;
               }
               if (node.h === "" || Math.round(h + y - space.height) <= ERROR) {
                 return true;
               }
-              const area = node[_xfa_object.$getTemplateRoot]()[_xfa_object.$extra].currentContentArea;
+              const area = node[_symbol_utils.$getTemplateRoot]()[_symbol_utils.$extra].currentContentArea;
               return h + y > area.h;
             case "rl-row":
             case "row":
-              if (node[_xfa_object.$getTemplateRoot]()[_xfa_object.$extra].noLayoutFailure) {
+              if (node[_symbol_utils.$getTemplateRoot]()[_symbol_utils.$extra].noLayoutFailure) {
                 return true;
               }
               if (node.h !== "") {
@@ -53022,7 +51997,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
 
         /***/
 }),
-/* 85 */
+/* 83 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -53044,11 +52019,12 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
         exports.setMinMaxDimensions = setMinMaxDimensions;
         exports.setPara = setPara;
         exports.toStyle = toStyle;
-        var _xfa_object = __w_pdfjs_require__(78);
+        var _symbol_utils = __w_pdfjs_require__(78);
         var _util = __w_pdfjs_require__(2);
-        var _utils = __w_pdfjs_require__(79);
-        var _fonts = __w_pdfjs_require__(86);
-        var _text = __w_pdfjs_require__(87);
+        var _utils = __w_pdfjs_require__(84);
+        var _fonts = __w_pdfjs_require__(85);
+        var _text = __w_pdfjs_require__(86);
+        var _xfa_object = __w_pdfjs_require__(87);
         function measureToString(m) {
           if (typeof m === "string") {
             return "0px";
@@ -53057,7 +52033,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
         }
         const converters = {
           anchorType(node, style) {
-            const parent = node[_xfa_object.$getSubformParent]();
+            const parent = node[_symbol_utils.$getSubformParent]();
             if (!parent || parent.layout && parent.layout !== "position") {
               return;
             }
@@ -53092,11 +52068,11 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             }
           },
           dimensions(node, style) {
-            const parent = node[_xfa_object.$getSubformParent]();
+            const parent = node[_symbol_utils.$getSubformParent]();
             let width = node.w;
             const height = node.h;
             if (parent.layout?.includes("row")) {
-              const extra = parent[_xfa_object.$extra];
+              const extra = parent[_symbol_utils.$extra];
               const colSpan = node.colSpan;
               let w;
               if (colSpan === -1) {
@@ -53110,19 +52086,11 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 width = node.w = w;
               }
             }
-            if (width !== "") {
-              style.width = measureToString(width);
-            } else {
-              style.width = "auto";
-            }
-            if (height !== "") {
-              style.height = measureToString(height);
-            } else {
-              style.height = "auto";
-            }
+            style.width = width !== "" ? measureToString(width) : "auto";
+            style.height = height !== "" ? measureToString(height) : "auto";
           },
           position(node, style) {
-            const parent = node[_xfa_object.$getSubformParent]();
+            const parent = node[_symbol_utils.$getSubformParent]();
             if (parent?.layout && parent.layout !== "position") {
               return;
             }
@@ -53151,7 +52119,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             }
           },
           hAlign(node, style) {
-            if (node[_xfa_object.$nodeName] === "para") {
+            if (node[_symbol_utils.$nodeName] === "para") {
               switch (node.hAlign) {
                 case "justifyAll":
                   style.textAlign = "justify-all";
@@ -53178,12 +52146,12 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           },
           margin(node, style) {
             if (node.margin) {
-              style.margin = node.margin[_xfa_object.$toStyle]().margin;
+              style.margin = node.margin[_symbol_utils.$toStyle]().margin;
             }
           }
         };
         function setMinMaxDimensions(node, style) {
-          const parent = node[_xfa_object.$getSubformParent]();
+          const parent = node[_symbol_utils.$getSubformParent]();
           if (parent.layout === "position") {
             if (node.minW > 0) {
               style.minWidth = measureToString(node.minW);
@@ -53204,7 +52172,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           if (typeof text === "string") {
             measure.addString(text);
           } else {
-            text[_xfa_object.$pushGlyphs](measure);
+            text[_symbol_utils.$pushGlyphs](measure);
           }
           return measure.compute(width);
         }
@@ -53231,25 +52199,25 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             }
             let font = node.font;
             if (!font) {
-              const root = node[_xfa_object.$getTemplateRoot]();
-              let parent = node[_xfa_object.$getParent]();
+              const root = node[_symbol_utils.$getTemplateRoot]();
+              let parent = node[_symbol_utils.$getParent]();
               while (parent && parent !== root) {
                 if (parent.font) {
                   font = parent.font;
                   break;
                 }
-                parent = parent[_xfa_object.$getParent]();
+                parent = parent[_symbol_utils.$getParent]();
               }
             }
             const maxWidth = (node.w || availableSpace.width) - marginH;
-            const fontFinder = node[_xfa_object.$globalData].fontFinder;
-            if (node.value.exData && node.value.exData[_xfa_object.$content] && node.value.exData.contentType === "text/html") {
-              const res = layoutText(node.value.exData[_xfa_object.$content], font, margin, lineHeight, fontFinder, maxWidth);
+            const fontFinder = node[_symbol_utils.$globalData].fontFinder;
+            if (node.value.exData && node.value.exData[_symbol_utils.$content] && node.value.exData.contentType === "text/html") {
+              const res = layoutText(node.value.exData[_symbol_utils.$content], font, margin, lineHeight, fontFinder, maxWidth);
               width = res.width;
               height = res.height;
               isBroken = res.isBroken;
             } else {
-              const text = node.value[_xfa_object.$text]();
+              const text = node.value[_symbol_utils.$text]();
               if (text) {
                 const res = layoutText(text, font, margin, lineHeight, fontFinder, maxWidth);
                 width = res.width;
@@ -53281,12 +52249,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             let width = node.w;
             if (width === "") {
               if (node.maxW === 0) {
-                const parent = node[_xfa_object.$getSubformParent]();
-                if (parent.layout === "position" && parent.w !== "") {
-                  width = 0;
-                } else {
-                  width = node.minW;
-                }
+                const parent = node[_symbol_utils.$getSubformParent]();
+                width = parent.layout === "position" && parent.w !== "" ? 0 : node.minW;
               } else {
                 width = Math.min(node.maxW, availableSpace.width);
               }
@@ -53295,12 +52259,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             let height = node.h;
             if (height === "") {
               if (node.maxH === 0) {
-                const parent = node[_xfa_object.$getSubformParent]();
-                if (parent.layout === "position" && parent.h !== "") {
-                  height = 0;
-                } else {
-                  height = node.minH;
-                }
+                const parent = node[_symbol_utils.$getSubformParent]();
+                height = parent.layout === "position" && parent.h !== "" ? 0 : node.minH;
               } else {
                 height = Math.min(node.maxH, availableSpace.height);
               }
@@ -53311,9 +52271,9 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           return bbox;
         }
         function fixDimensions(node) {
-          const parent = node[_xfa_object.$getSubformParent]();
+          const parent = node[_symbol_utils.$getSubformParent]();
           if (parent.layout?.includes("row")) {
-            const extra = parent[_xfa_object.$extra];
+            const extra = parent[_symbol_utils.$extra];
             const colSpan = node.colSpan;
             let width;
             if (colSpan === -1) {
@@ -53366,7 +52326,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               continue;
             }
             if (value instanceof _xfa_object.XFAObject) {
-              const newStyle = value[_xfa_object.$toStyle]();
+              const newStyle = value[_symbol_utils.$toStyle]();
               if (newStyle) {
                 Object.assign(style, newStyle);
               } else {
@@ -53396,7 +52356,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             const {
               widths,
               insets
-            } = node.border[_xfa_object.$extra];
+            } = node.border[_symbol_utils.$extra];
             let width, height;
             let top = insets[0];
             let left = insets[3];
@@ -53453,11 +52413,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               delete style[key];
             }
           }
-          if (style.position === "absolute") {
-            wrapper.attributes.style.position = "absolute";
-          } else {
-            wrapper.attributes.style.position = "relative";
-          }
+          wrapper.attributes.style.position = style.position === "absolute" ? "absolute" : "relative";
           delete style.position;
           if (style.alignSelf) {
             wrapper.attributes.style.alignSelf = style.alignSelf;
@@ -53492,7 +52448,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           return node.relevant.length > 0 && !node.relevant[0].excluded && node.relevant[0].viewname === "print";
         }
         function getCurrentPara(node) {
-          const stack = node[_xfa_object.$getTemplateRoot]()[_xfa_object.$extra].paraStack;
+          const stack = node[_symbol_utils.$getTemplateRoot]()[_symbol_utils.$extra].paraStack;
           return stack.length ? stack.at(-1) : null;
         }
         function setPara(node, nodeStyle, value) {
@@ -53521,7 +52477,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                   valueStyle.justifyContent = "center";
                   break;
               }
-              const paraStyle = para[_xfa_object.$toStyle]();
+              const paraStyle = para[_symbol_utils.$toStyle]();
               for (const [key, val] of Object.entries(paraStyle)) {
                 if (!(key in valueStyle)) {
                   valueStyle[key] = val;
@@ -53568,7 +52524,227 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
 
         /***/
 }),
-/* 86 */
+/* 84 */
+/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
+
+
+
+        Object.defineProperty(exports, "__esModule", ({
+          value: true
+        }));
+        exports.HTMLResult = void 0;
+        exports.getBBox = getBBox;
+        exports.getColor = getColor;
+        exports.getFloat = getFloat;
+        exports.getInteger = getInteger;
+        exports.getKeyword = getKeyword;
+        exports.getMeasurement = getMeasurement;
+        exports.getRatio = getRatio;
+        exports.getRelevant = getRelevant;
+        exports.getStringOption = getStringOption;
+        exports.stripQuotes = stripQuotes;
+        var _util = __w_pdfjs_require__(2);
+        const dimConverters = {
+          pt: x => x,
+          cm: x => x / 2.54 * 72,
+          mm: x => x / (10 * 2.54) * 72,
+          in: x => x * 72,
+          px: x => x
+        };
+        const measurementPattern = /([+-]?\d+\.?\d*)(.*)/;
+        function stripQuotes(str) {
+          if (str.startsWith("'") || str.startsWith('"')) {
+            return str.slice(1, -1);
+          }
+          return str;
+        }
+        function getInteger({
+          data,
+          defaultValue,
+          validate
+        }) {
+          if (!data) {
+            return defaultValue;
+          }
+          data = data.trim();
+          const n = parseInt(data, 10);
+          if (!isNaN(n) && validate(n)) {
+            return n;
+          }
+          return defaultValue;
+        }
+        function getFloat({
+          data,
+          defaultValue,
+          validate
+        }) {
+          if (!data) {
+            return defaultValue;
+          }
+          data = data.trim();
+          const n = parseFloat(data);
+          if (!isNaN(n) && validate(n)) {
+            return n;
+          }
+          return defaultValue;
+        }
+        function getKeyword({
+          data,
+          defaultValue,
+          validate
+        }) {
+          if (!data) {
+            return defaultValue;
+          }
+          data = data.trim();
+          if (validate(data)) {
+            return data;
+          }
+          return defaultValue;
+        }
+        function getStringOption(data, options) {
+          return getKeyword({
+            data,
+            defaultValue: options[0],
+            validate: k => options.includes(k)
+          });
+        }
+        function getMeasurement(str, def = "0") {
+          def ||= "0";
+          if (!str) {
+            return getMeasurement(def);
+          }
+          const match = str.trim().match(measurementPattern);
+          if (!match) {
+            return getMeasurement(def);
+          }
+          const [, valueStr, unit] = match;
+          const value = parseFloat(valueStr);
+          if (isNaN(value)) {
+            return getMeasurement(def);
+          }
+          if (value === 0) {
+            return 0;
+          }
+          const conv = dimConverters[unit];
+          if (conv) {
+            return conv(value);
+          }
+          return value;
+        }
+        function getRatio(data) {
+          if (!data) {
+            return {
+              num: 1,
+              den: 1
+            };
+          }
+          const ratio = data.trim().split(/\s*:\s*/).map(x => parseFloat(x)).filter(x => !isNaN(x));
+          if (ratio.length === 1) {
+            ratio.push(1);
+          }
+          if (ratio.length === 0) {
+            return {
+              num: 1,
+              den: 1
+            };
+          }
+          const [num, den] = ratio;
+          return {
+            num,
+            den
+          };
+        }
+        function getRelevant(data) {
+          if (!data) {
+            return [];
+          }
+          return data.trim().split(/\s+/).map(e => {
+            return {
+              excluded: e[0] === "-",
+              viewname: e.substring(1)
+            };
+          });
+        }
+        function getColor(data, def = [0, 0, 0]) {
+          let [r, g, b] = def;
+          if (!data) {
+            return {
+              r,
+              g,
+              b
+            };
+          }
+          const color = data.trim().split(/\s*,\s*/).map(c => Math.min(Math.max(0, parseInt(c.trim(), 10)), 255)).map(c => isNaN(c) ? 0 : c);
+          if (color.length < 3) {
+            return {
+              r,
+              g,
+              b
+            };
+          }
+          [r, g, b] = color;
+          return {
+            r,
+            g,
+            b
+          };
+        }
+        function getBBox(data) {
+          const def = -1;
+          if (!data) {
+            return {
+              x: def,
+              y: def,
+              width: def,
+              height: def
+            };
+          }
+          const bbox = data.trim().split(/\s*,\s*/).map(m => getMeasurement(m, "-1"));
+          if (bbox.length < 4 || bbox[2] < 0 || bbox[3] < 0) {
+            return {
+              x: def,
+              y: def,
+              width: def,
+              height: def
+            };
+          }
+          const [x, y, width, height] = bbox;
+          return {
+            x,
+            y,
+            width,
+            height
+          };
+        }
+        class HTMLResult {
+          static get FAILURE() {
+            return (0, _util.shadow)(this, "FAILURE", new HTMLResult(false, null, null, null));
+          }
+          static get EMPTY() {
+            return (0, _util.shadow)(this, "EMPTY", new HTMLResult(true, null, null, null));
+          }
+          constructor(success, html, bbox, breakNode) {
+            this.success = success;
+            this.html = html;
+            this.bbox = bbox;
+            this.breakNode = breakNode;
+          }
+          isBreak() {
+            return !!this.breakNode;
+          }
+          static breakNode(node) {
+            return new HTMLResult(false, null, null, node);
+          }
+          static success(html, bbox = null) {
+            return new HTMLResult(true, html, bbox, null);
+          }
+        }
+        exports.HTMLResult = HTMLResult;
+
+        /***/
+}),
+/* 85 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -53579,8 +52755,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
         exports.FontFinder = void 0;
         exports.getMetrics = getMetrics;
         exports.selectFont = selectFont;
-        var _xfa_object = __w_pdfjs_require__(78);
-        var _utils = __w_pdfjs_require__(79);
+        var _symbol_utils = __w_pdfjs_require__(78);
+        var _utils = __w_pdfjs_require__(84);
         var _util = __w_pdfjs_require__(2);
         class FontFinder {
           constructor(pdfFonts) {
@@ -53712,7 +52888,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           let pdfFont = null;
           if (xfaFont) {
             const name = (0, _utils.stripQuotes)(xfaFont.typeface);
-            const typeface = xfaFont[_xfa_object.$globalData].fontFinder.find(name);
+            const typeface = xfaFont[_symbol_utils.$globalData].fontFinder.find(name);
             pdfFont = selectFont(xfaFont, typeface);
           }
           if (!pdfFont) {
@@ -53734,7 +52910,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
 
         /***/
 }),
-/* 87 */
+/* 86 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -53743,7 +52919,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           value: true
         }));
         exports.TextMeasure = void 0;
-        var _fonts = __w_pdfjs_require__(86);
+        var _fonts = __w_pdfjs_require__(85);
         const WIDTH_FACTOR = 1.02;
         class FontInfo {
           constructor(xfaFont, margin, lineHeight, fontFinder) {
@@ -53955,6 +53131,833 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
 
         /***/
 }),
+/* 87 */
+/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
+
+
+
+        Object.defineProperty(exports, "__esModule", ({
+          value: true
+        }));
+        exports.XmlObject = exports.XFAObjectArray = exports.XFAObject = exports.XFAAttribute = exports.StringObject = exports.OptionObject = exports.Option10 = exports.Option01 = exports.IntegerObject = exports.ContentObject = void 0;
+        var _symbol_utils = __w_pdfjs_require__(78);
+        var _utils = __w_pdfjs_require__(84);
+        var _util = __w_pdfjs_require__(2);
+        var _core_utils = __w_pdfjs_require__(3);
+        var _namespaces = __w_pdfjs_require__(81);
+        var _som = __w_pdfjs_require__(88);
+        const _applyPrototype = Symbol();
+        const _attributes = Symbol();
+        const _attributeNames = Symbol();
+        const _children = Symbol("_children");
+        const _cloneAttribute = Symbol();
+        const _dataValue = Symbol();
+        const _defaultValue = Symbol();
+        const _filteredChildrenGenerator = Symbol();
+        const _getPrototype = Symbol();
+        const _getUnsetAttributes = Symbol();
+        const _hasChildren = Symbol();
+        const _max = Symbol();
+        const _options = Symbol();
+        const _parent = Symbol("parent");
+        const _resolvePrototypesHelper = Symbol();
+        const _setAttributes = Symbol();
+        const _validator = Symbol();
+        let uid = 0;
+        const NS_DATASETS = _namespaces.NamespaceIds.datasets.id;
+        class XFAObject {
+          constructor(nsId, name, hasChildren = false) {
+            this[_symbol_utils.$namespaceId] = nsId;
+            this[_symbol_utils.$nodeName] = name;
+            this[_hasChildren] = hasChildren;
+            this[_parent] = null;
+            this[_children] = [];
+            this[_symbol_utils.$uid] = `${name}${uid++}`;
+            this[_symbol_utils.$globalData] = null;
+          }
+          get isXFAObject() {
+            return true;
+          }
+          get isXFAObjectArray() {
+            return false;
+          }
+          createNodes(path) {
+            let root = this,
+              node = null;
+            for (const {
+              name,
+              index
+            } of path) {
+              for (let i = 0, ii = isFinite(index) ? index : 0; i <= ii; i++) {
+                const nsId = root[_symbol_utils.$namespaceId] === NS_DATASETS ? -1 : root[_symbol_utils.$namespaceId];
+                node = new XmlObject(nsId, name);
+                root[_symbol_utils.$appendChild](node);
+              }
+              root = node;
+            }
+            return node;
+          }
+          [_symbol_utils.$onChild](child) {
+            if (!this[_hasChildren] || !this[_symbol_utils.$onChildCheck](child)) {
+              return false;
+            }
+            const name = child[_symbol_utils.$nodeName];
+            const node = this[name];
+            if (node instanceof XFAObjectArray) {
+              if (node.push(child)) {
+                this[_symbol_utils.$appendChild](child);
+                return true;
+              }
+            } else {
+              if (node !== null) {
+                this[_symbol_utils.$removeChild](node);
+              }
+              this[name] = child;
+              this[_symbol_utils.$appendChild](child);
+              return true;
+            }
+            let id = "";
+            if (this.id) {
+              id = ` (id: ${this.id})`;
+            } else if (this.name) {
+              id = ` (name: ${this.name} ${this.h.value})`;
+            }
+            (0, _util.warn)(`XFA - node "${this[_symbol_utils.$nodeName]}"${id} has already enough "${name}"!`);
+            return false;
+          }
+          [_symbol_utils.$onChildCheck](child) {
+            return this.hasOwnProperty(child[_symbol_utils.$nodeName]) && child[_symbol_utils.$namespaceId] === this[_symbol_utils.$namespaceId];
+          }
+          [_symbol_utils.$isNsAgnostic]() {
+            return false;
+          }
+          [_symbol_utils.$acceptWhitespace]() {
+            return false;
+          }
+          [_symbol_utils.$isCDATAXml]() {
+            return false;
+          }
+          [_symbol_utils.$isBindable]() {
+            return false;
+          }
+          [_symbol_utils.$popPara]() {
+            if (this.para) {
+              this[_symbol_utils.$getTemplateRoot]()[_symbol_utils.$extra].paraStack.pop();
+            }
+          }
+          [_symbol_utils.$pushPara]() {
+            this[_symbol_utils.$getTemplateRoot]()[_symbol_utils.$extra].paraStack.push(this.para);
+          }
+          [_symbol_utils.$setId](ids) {
+            if (this.id && this[_symbol_utils.$namespaceId] === _namespaces.NamespaceIds.template.id) {
+              ids.set(this.id, this);
+            }
+          }
+          [_symbol_utils.$getTemplateRoot]() {
+            return this[_symbol_utils.$globalData].template;
+          }
+          [_symbol_utils.$isSplittable]() {
+            return false;
+          }
+          [_symbol_utils.$isThereMoreWidth]() {
+            return false;
+          }
+          [_symbol_utils.$appendChild](child) {
+            child[_parent] = this;
+            this[_children].push(child);
+            if (!child[_symbol_utils.$globalData] && this[_symbol_utils.$globalData]) {
+              child[_symbol_utils.$globalData] = this[_symbol_utils.$globalData];
+            }
+          }
+          [_symbol_utils.$removeChild](child) {
+            const i = this[_children].indexOf(child);
+            this[_children].splice(i, 1);
+          }
+          [_symbol_utils.$hasSettableValue]() {
+            return this.hasOwnProperty("value");
+          }
+          [_symbol_utils.$setValue](_) { }
+          [_symbol_utils.$onText](_) { }
+          [_symbol_utils.$finalize]() { }
+          [_symbol_utils.$clean](builder) {
+            delete this[_hasChildren];
+            if (this[_symbol_utils.$cleanup]) {
+              builder.clean(this[_symbol_utils.$cleanup]);
+              delete this[_symbol_utils.$cleanup];
+            }
+          }
+          [_symbol_utils.$indexOf](child) {
+            return this[_children].indexOf(child);
+          }
+          [_symbol_utils.$insertAt](i, child) {
+            child[_parent] = this;
+            this[_children].splice(i, 0, child);
+            if (!child[_symbol_utils.$globalData] && this[_symbol_utils.$globalData]) {
+              child[_symbol_utils.$globalData] = this[_symbol_utils.$globalData];
+            }
+          }
+          [_symbol_utils.$isTransparent]() {
+            return !this.name;
+          }
+          [_symbol_utils.$lastAttribute]() {
+            return "";
+          }
+          [_symbol_utils.$text]() {
+            if (this[_children].length === 0) {
+              return this[_symbol_utils.$content];
+            }
+            return this[_children].map(c => c[_symbol_utils.$text]()).join("");
+          }
+          get [_attributeNames]() {
+            const proto = Object.getPrototypeOf(this);
+            if (!proto._attributes) {
+              const attributes = proto._attributes = new Set();
+              for (const name of Object.getOwnPropertyNames(this)) {
+                if (this[name] === null || this[name] instanceof XFAObject || this[name] instanceof XFAObjectArray) {
+                  break;
+                }
+                attributes.add(name);
+              }
+            }
+            return (0, _util.shadow)(this, _attributeNames, proto._attributes);
+          }
+          [_symbol_utils.$isDescendent](parent) {
+            let node = this;
+            while (node) {
+              if (node === parent) {
+                return true;
+              }
+              node = node[_symbol_utils.$getParent]();
+            }
+            return false;
+          }
+          [_symbol_utils.$getParent]() {
+            return this[_parent];
+          }
+          [_symbol_utils.$getSubformParent]() {
+            return this[_symbol_utils.$getParent]();
+          }
+          [_symbol_utils.$getChildren](name = null) {
+            if (!name) {
+              return this[_children];
+            }
+            return this[name];
+          }
+          [_symbol_utils.$dump]() {
+            const dumped = Object.create(null);
+            if (this[_symbol_utils.$content]) {
+              dumped.$content = this[_symbol_utils.$content];
+            }
+            for (const name of Object.getOwnPropertyNames(this)) {
+              const value = this[name];
+              if (value === null) {
+                continue;
+              }
+              if (value instanceof XFAObject) {
+                dumped[name] = value[_symbol_utils.$dump]();
+              } else if (value instanceof XFAObjectArray) {
+                if (!value.isEmpty()) {
+                  dumped[name] = value.dump();
+                }
+              } else {
+                dumped[name] = value;
+              }
+            }
+            return dumped;
+          }
+          [_symbol_utils.$toStyle]() {
+            return null;
+          }
+          [_symbol_utils.$toHTML]() {
+            return _utils.HTMLResult.EMPTY;
+          }
+          *[_symbol_utils.$getContainedChildren]() {
+            for (const node of this[_symbol_utils.$getChildren]()) {
+              yield node;
+            }
+          }
+          *[_filteredChildrenGenerator](filter, include) {
+            for (const node of this[_symbol_utils.$getContainedChildren]()) {
+              if (!filter || include === filter.has(node[_symbol_utils.$nodeName])) {
+                const availableSpace = this[_symbol_utils.$getAvailableSpace]();
+                const res = node[_symbol_utils.$toHTML](availableSpace);
+                if (!res.success) {
+                  this[_symbol_utils.$extra].failingNode = node;
+                }
+                yield res;
+              }
+            }
+          }
+          [_symbol_utils.$flushHTML]() {
+            return null;
+          }
+          [_symbol_utils.$addHTML](html, bbox) {
+            this[_symbol_utils.$extra].children.push(html);
+          }
+          [_symbol_utils.$getAvailableSpace]() { }
+          [_symbol_utils.$childrenToHTML]({
+            filter = null,
+            include = true
+          }) {
+            if (!this[_symbol_utils.$extra].generator) {
+              this[_symbol_utils.$extra].generator = this[_filteredChildrenGenerator](filter, include);
+            } else {
+              const availableSpace = this[_symbol_utils.$getAvailableSpace]();
+              const res = this[_symbol_utils.$extra].failingNode[_symbol_utils.$toHTML](availableSpace);
+              if (!res.success) {
+                return res;
+              }
+              if (res.html) {
+                this[_symbol_utils.$addHTML](res.html, res.bbox);
+              }
+              delete this[_symbol_utils.$extra].failingNode;
+            }
+            while (true) {
+              const gen = this[_symbol_utils.$extra].generator.next();
+              if (gen.done) {
+                break;
+              }
+              const res = gen.value;
+              if (!res.success) {
+                return res;
+              }
+              if (res.html) {
+                this[_symbol_utils.$addHTML](res.html, res.bbox);
+              }
+            }
+            this[_symbol_utils.$extra].generator = null;
+            return _utils.HTMLResult.EMPTY;
+          }
+          [_symbol_utils.$setSetAttributes](attributes) {
+            this[_setAttributes] = new Set(Object.keys(attributes));
+          }
+          [_getUnsetAttributes](protoAttributes) {
+            const allAttr = this[_attributeNames];
+            const setAttr = this[_setAttributes];
+            return [...protoAttributes].filter(x => allAttr.has(x) && !setAttr.has(x));
+          }
+          [_symbol_utils.$resolvePrototypes](ids, ancestors = new Set()) {
+            for (const child of this[_children]) {
+              child[_resolvePrototypesHelper](ids, ancestors);
+            }
+          }
+          [_resolvePrototypesHelper](ids, ancestors) {
+            const proto = this[_getPrototype](ids, ancestors);
+            if (proto) {
+              this[_applyPrototype](proto, ids, ancestors);
+            } else {
+              this[_symbol_utils.$resolvePrototypes](ids, ancestors);
+            }
+          }
+          [_getPrototype](ids, ancestors) {
+            const {
+              use,
+              usehref
+            } = this;
+            if (!use && !usehref) {
+              return null;
+            }
+            let proto = null;
+            let somExpression = null;
+            let id = null;
+            let ref = use;
+            if (usehref) {
+              ref = usehref;
+              if (usehref.startsWith("#som(") && usehref.endsWith(")")) {
+                somExpression = usehref.slice("#som(".length, -1);
+              } else if (usehref.startsWith(".#som(") && usehref.endsWith(")")) {
+                somExpression = usehref.slice(".#som(".length, -1);
+              } else if (usehref.startsWith("#")) {
+                id = usehref.slice(1);
+              } else if (usehref.startsWith(".#")) {
+                id = usehref.slice(2);
+              }
+            } else if (use.startsWith("#")) {
+              id = use.slice(1);
+            } else {
+              somExpression = use;
+            }
+            this.use = this.usehref = "";
+            if (id) {
+              proto = ids.get(id);
+            } else {
+              proto = (0, _som.searchNode)(ids.get(_symbol_utils.$root), this, somExpression, true, false);
+              if (proto) {
+                proto = proto[0];
+              }
+            }
+            if (!proto) {
+              (0, _util.warn)(`XFA - Invalid prototype reference: ${ref}.`);
+              return null;
+            }
+            if (proto[_symbol_utils.$nodeName] !== this[_symbol_utils.$nodeName]) {
+              (0, _util.warn)(`XFA - Incompatible prototype: ${proto[_symbol_utils.$nodeName]} !== ${this[_symbol_utils.$nodeName]}.`);
+              return null;
+            }
+            if (ancestors.has(proto)) {
+              (0, _util.warn)(`XFA - Cycle detected in prototypes use.`);
+              return null;
+            }
+            ancestors.add(proto);
+            const protoProto = proto[_getPrototype](ids, ancestors);
+            if (protoProto) {
+              proto[_applyPrototype](protoProto, ids, ancestors);
+            }
+            proto[_symbol_utils.$resolvePrototypes](ids, ancestors);
+            ancestors.delete(proto);
+            return proto;
+          }
+          [_applyPrototype](proto, ids, ancestors) {
+            if (ancestors.has(proto)) {
+              (0, _util.warn)(`XFA - Cycle detected in prototypes use.`);
+              return;
+            }
+            if (!this[_symbol_utils.$content] && proto[_symbol_utils.$content]) {
+              this[_symbol_utils.$content] = proto[_symbol_utils.$content];
+            }
+            const newAncestors = new Set(ancestors);
+            newAncestors.add(proto);
+            for (const unsetAttrName of this[_getUnsetAttributes](proto[_setAttributes])) {
+              this[unsetAttrName] = proto[unsetAttrName];
+              if (this[_setAttributes]) {
+                this[_setAttributes].add(unsetAttrName);
+              }
+            }
+            for (const name of Object.getOwnPropertyNames(this)) {
+              if (this[_attributeNames].has(name)) {
+                continue;
+              }
+              const value = this[name];
+              const protoValue = proto[name];
+              if (value instanceof XFAObjectArray) {
+                for (const child of value[_children]) {
+                  child[_resolvePrototypesHelper](ids, ancestors);
+                }
+                for (let i = value[_children].length, ii = protoValue[_children].length; i < ii; i++) {
+                  const child = proto[_children][i][_symbol_utils.$clone]();
+                  if (value.push(child)) {
+                    child[_parent] = this;
+                    this[_children].push(child);
+                    child[_resolvePrototypesHelper](ids, ancestors);
+                  } else {
+                    break;
+                  }
+                }
+                continue;
+              }
+              if (value !== null) {
+                value[_symbol_utils.$resolvePrototypes](ids, ancestors);
+                if (protoValue) {
+                  value[_applyPrototype](protoValue, ids, ancestors);
+                }
+                continue;
+              }
+              if (protoValue !== null) {
+                const child = protoValue[_symbol_utils.$clone]();
+                child[_parent] = this;
+                this[name] = child;
+                this[_children].push(child);
+                child[_resolvePrototypesHelper](ids, ancestors);
+              }
+            }
+          }
+          static [_cloneAttribute](obj) {
+            if (Array.isArray(obj)) {
+              return obj.map(x => XFAObject[_cloneAttribute](x));
+            }
+            if (typeof obj === "object" && obj !== null) {
+              return Object.assign({}, obj);
+            }
+            return obj;
+          }
+          [_symbol_utils.$clone]() {
+            const clone = Object.create(Object.getPrototypeOf(this));
+            for (const $symbol of Object.getOwnPropertySymbols(this)) {
+              try {
+                clone[$symbol] = this[$symbol];
+              } catch {
+                (0, _util.shadow)(clone, $symbol, this[$symbol]);
+              }
+            }
+            clone[_symbol_utils.$uid] = `${clone[_symbol_utils.$nodeName]}${uid++}`;
+            clone[_children] = [];
+            for (const name of Object.getOwnPropertyNames(this)) {
+              if (this[_attributeNames].has(name)) {
+                clone[name] = XFAObject[_cloneAttribute](this[name]);
+                continue;
+              }
+              const value = this[name];
+              clone[name] = value instanceof XFAObjectArray ? new XFAObjectArray(value[_max]) : null;
+            }
+            for (const child of this[_children]) {
+              const name = child[_symbol_utils.$nodeName];
+              const clonedChild = child[_symbol_utils.$clone]();
+              clone[_children].push(clonedChild);
+              clonedChild[_parent] = clone;
+              if (clone[name] === null) {
+                clone[name] = clonedChild;
+              } else {
+                clone[name][_children].push(clonedChild);
+              }
+            }
+            return clone;
+          }
+          [_symbol_utils.$getChildren](name = null) {
+            if (!name) {
+              return this[_children];
+            }
+            return this[_children].filter(c => c[_symbol_utils.$nodeName] === name);
+          }
+          [_symbol_utils.$getChildrenByClass](name) {
+            return this[name];
+          }
+          [_symbol_utils.$getChildrenByName](name, allTransparent, first = true) {
+            return Array.from(this[_symbol_utils.$getChildrenByNameIt](name, allTransparent, first));
+          }
+          *[_symbol_utils.$getChildrenByNameIt](name, allTransparent, first = true) {
+            if (name === "parent") {
+              yield this[_parent];
+              return;
+            }
+            for (const child of this[_children]) {
+              if (child[_symbol_utils.$nodeName] === name) {
+                yield child;
+              }
+              if (child.name === name) {
+                yield child;
+              }
+              if (allTransparent || child[_symbol_utils.$isTransparent]()) {
+                yield* child[_symbol_utils.$getChildrenByNameIt](name, allTransparent, false);
+              }
+            }
+            if (first && this[_attributeNames].has(name)) {
+              yield new XFAAttribute(this, name, this[name]);
+            }
+          }
+        }
+        exports.XFAObject = XFAObject;
+        class XFAObjectArray {
+          constructor(max = Infinity) {
+            this[_max] = max;
+            this[_children] = [];
+          }
+          get isXFAObject() {
+            return false;
+          }
+          get isXFAObjectArray() {
+            return true;
+          }
+          push(child) {
+            const len = this[_children].length;
+            if (len <= this[_max]) {
+              this[_children].push(child);
+              return true;
+            }
+            (0, _util.warn)(`XFA - node "${child[_symbol_utils.$nodeName]}" accepts no more than ${this[_max]} children`);
+            return false;
+          }
+          isEmpty() {
+            return this[_children].length === 0;
+          }
+          dump() {
+            return this[_children].length === 1 ? this[_children][0][_symbol_utils.$dump]() : this[_children].map(x => x[_symbol_utils.$dump]());
+          }
+          [_symbol_utils.$clone]() {
+            const clone = new XFAObjectArray(this[_max]);
+            clone[_children] = this[_children].map(c => c[_symbol_utils.$clone]());
+            return clone;
+          }
+          get children() {
+            return this[_children];
+          }
+          clear() {
+            this[_children].length = 0;
+          }
+        }
+        exports.XFAObjectArray = XFAObjectArray;
+        class XFAAttribute {
+          constructor(node, name, value) {
+            this[_parent] = node;
+            this[_symbol_utils.$nodeName] = name;
+            this[_symbol_utils.$content] = value;
+            this[_symbol_utils.$consumed] = false;
+            this[_symbol_utils.$uid] = `attribute${uid++}`;
+          }
+          [_symbol_utils.$getParent]() {
+            return this[_parent];
+          }
+          [_symbol_utils.$isDataValue]() {
+            return true;
+          }
+          [_symbol_utils.$getDataValue]() {
+            return this[_symbol_utils.$content].trim();
+          }
+          [_symbol_utils.$setValue](value) {
+            value = value.value || "";
+            this[_symbol_utils.$content] = value.toString();
+          }
+          [_symbol_utils.$text]() {
+            return this[_symbol_utils.$content];
+          }
+          [_symbol_utils.$isDescendent](parent) {
+            return this[_parent] === parent || this[_parent][_symbol_utils.$isDescendent](parent);
+          }
+        }
+        exports.XFAAttribute = XFAAttribute;
+        class XmlObject extends XFAObject {
+          constructor(nsId, name, attributes = {}) {
+            super(nsId, name);
+            this[_symbol_utils.$content] = "";
+            this[_dataValue] = null;
+            if (name !== "#text") {
+              const map = new Map();
+              this[_attributes] = map;
+              for (const [attrName, value] of Object.entries(attributes)) {
+                map.set(attrName, new XFAAttribute(this, attrName, value));
+              }
+              if (attributes.hasOwnProperty(_symbol_utils.$nsAttributes)) {
+                const dataNode = attributes[_symbol_utils.$nsAttributes].xfa.dataNode;
+                if (dataNode !== undefined) {
+                  if (dataNode === "dataGroup") {
+                    this[_dataValue] = false;
+                  } else if (dataNode === "dataValue") {
+                    this[_dataValue] = true;
+                  }
+                }
+              }
+            }
+            this[_symbol_utils.$consumed] = false;
+          }
+          [_symbol_utils.$toString](buf) {
+            const tagName = this[_symbol_utils.$nodeName];
+            if (tagName === "#text") {
+              buf.push((0, _core_utils.encodeToXmlString)(this[_symbol_utils.$content]));
+              return;
+            }
+            const utf8TagName = (0, _util.utf8StringToString)(tagName);
+            const prefix = this[_symbol_utils.$namespaceId] === NS_DATASETS ? "xfa:" : "";
+            buf.push(`<${prefix}${utf8TagName}`);
+            for (const [name, value] of this[_attributes].entries()) {
+              const utf8Name = (0, _util.utf8StringToString)(name);
+              buf.push(` ${utf8Name}="${(0, _core_utils.encodeToXmlString)(value[_symbol_utils.$content])}"`);
+            }
+            if (this[_dataValue] !== null) {
+              if (this[_dataValue]) {
+                buf.push(` xfa:dataNode="dataValue"`);
+              } else {
+                buf.push(` xfa:dataNode="dataGroup"`);
+              }
+            }
+            if (!this[_symbol_utils.$content] && this[_children].length === 0) {
+              buf.push("/>");
+              return;
+            }
+            buf.push(">");
+            if (this[_symbol_utils.$content]) {
+              if (typeof this[_symbol_utils.$content] === "string") {
+                buf.push((0, _core_utils.encodeToXmlString)(this[_symbol_utils.$content]));
+              } else {
+                this[_symbol_utils.$content][_symbol_utils.$toString](buf);
+              }
+            } else {
+              for (const child of this[_children]) {
+                child[_symbol_utils.$toString](buf);
+              }
+            }
+            buf.push(`</${prefix}${utf8TagName}>`);
+          }
+          [_symbol_utils.$onChild](child) {
+            if (this[_symbol_utils.$content]) {
+              const node = new XmlObject(this[_symbol_utils.$namespaceId], "#text");
+              this[_symbol_utils.$appendChild](node);
+              node[_symbol_utils.$content] = this[_symbol_utils.$content];
+              this[_symbol_utils.$content] = "";
+            }
+            this[_symbol_utils.$appendChild](child);
+            return true;
+          }
+          [_symbol_utils.$onText](str) {
+            this[_symbol_utils.$content] += str;
+          }
+          [_symbol_utils.$finalize]() {
+            if (this[_symbol_utils.$content] && this[_children].length > 0) {
+              const node = new XmlObject(this[_symbol_utils.$namespaceId], "#text");
+              this[_symbol_utils.$appendChild](node);
+              node[_symbol_utils.$content] = this[_symbol_utils.$content];
+              delete this[_symbol_utils.$content];
+            }
+          }
+          [_symbol_utils.$toHTML]() {
+            if (this[_symbol_utils.$nodeName] === "#text") {
+              return _utils.HTMLResult.success({
+                name: "#text",
+                value: this[_symbol_utils.$content]
+              });
+            }
+            return _utils.HTMLResult.EMPTY;
+          }
+          [_symbol_utils.$getChildren](name = null) {
+            if (!name) {
+              return this[_children];
+            }
+            return this[_children].filter(c => c[_symbol_utils.$nodeName] === name);
+          }
+          [_symbol_utils.$getAttributes]() {
+            return this[_attributes];
+          }
+          [_symbol_utils.$getChildrenByClass](name) {
+            const value = this[_attributes].get(name);
+            if (value !== undefined) {
+              return value;
+            }
+            return this[_symbol_utils.$getChildren](name);
+          }
+          *[_symbol_utils.$getChildrenByNameIt](name, allTransparent) {
+            const value = this[_attributes].get(name);
+            if (value) {
+              yield value;
+            }
+            for (const child of this[_children]) {
+              if (child[_symbol_utils.$nodeName] === name) {
+                yield child;
+              }
+              if (allTransparent) {
+                yield* child[_symbol_utils.$getChildrenByNameIt](name, allTransparent);
+              }
+            }
+          }
+          *[_symbol_utils.$getAttributeIt](name, skipConsumed) {
+            const value = this[_attributes].get(name);
+            if (value && (!skipConsumed || !value[_symbol_utils.$consumed])) {
+              yield value;
+            }
+            for (const child of this[_children]) {
+              yield* child[_symbol_utils.$getAttributeIt](name, skipConsumed);
+            }
+          }
+          *[_symbol_utils.$getRealChildrenByNameIt](name, allTransparent, skipConsumed) {
+            for (const child of this[_children]) {
+              if (child[_symbol_utils.$nodeName] === name && (!skipConsumed || !child[_symbol_utils.$consumed])) {
+                yield child;
+              }
+              if (allTransparent) {
+                yield* child[_symbol_utils.$getRealChildrenByNameIt](name, allTransparent, skipConsumed);
+              }
+            }
+          }
+          [_symbol_utils.$isDataValue]() {
+            if (this[_dataValue] === null) {
+              return this[_children].length === 0 || this[_children][0][_symbol_utils.$namespaceId] === _namespaces.NamespaceIds.xhtml.id;
+            }
+            return this[_dataValue];
+          }
+          [_symbol_utils.$getDataValue]() {
+            if (this[_dataValue] === null) {
+              if (this[_children].length === 0) {
+                return this[_symbol_utils.$content].trim();
+              }
+              if (this[_children][0][_symbol_utils.$namespaceId] === _namespaces.NamespaceIds.xhtml.id) {
+                return this[_children][0][_symbol_utils.$text]().trim();
+              }
+              return null;
+            }
+            return this[_symbol_utils.$content].trim();
+          }
+          [_symbol_utils.$setValue](value) {
+            value = value.value || "";
+            this[_symbol_utils.$content] = value.toString();
+          }
+          [_symbol_utils.$dump](hasNS = false) {
+            const dumped = Object.create(null);
+            if (hasNS) {
+              dumped.$ns = this[_symbol_utils.$namespaceId];
+            }
+            if (this[_symbol_utils.$content]) {
+              dumped.$content = this[_symbol_utils.$content];
+            }
+            dumped.$name = this[_symbol_utils.$nodeName];
+            dumped.children = [];
+            for (const child of this[_children]) {
+              dumped.children.push(child[_symbol_utils.$dump](hasNS));
+            }
+            dumped.attributes = Object.create(null);
+            for (const [name, value] of this[_attributes]) {
+              dumped.attributes[name] = value[_symbol_utils.$content];
+            }
+            return dumped;
+          }
+        }
+        exports.XmlObject = XmlObject;
+        class ContentObject extends XFAObject {
+          constructor(nsId, name) {
+            super(nsId, name);
+            this[_symbol_utils.$content] = "";
+          }
+          [_symbol_utils.$onText](text) {
+            this[_symbol_utils.$content] += text;
+          }
+          [_symbol_utils.$finalize]() { }
+        }
+        exports.ContentObject = ContentObject;
+        class OptionObject extends ContentObject {
+          constructor(nsId, name, options) {
+            super(nsId, name);
+            this[_options] = options;
+          }
+          [_symbol_utils.$finalize]() {
+            this[_symbol_utils.$content] = (0, _utils.getKeyword)({
+              data: this[_symbol_utils.$content],
+              defaultValue: this[_options][0],
+              validate: k => this[_options].includes(k)
+            });
+          }
+          [_symbol_utils.$clean](builder) {
+            super[_symbol_utils.$clean](builder);
+            delete this[_options];
+          }
+        }
+        exports.OptionObject = OptionObject;
+        class StringObject extends ContentObject {
+          [_symbol_utils.$finalize]() {
+            this[_symbol_utils.$content] = this[_symbol_utils.$content].trim();
+          }
+        }
+        exports.StringObject = StringObject;
+        class IntegerObject extends ContentObject {
+          constructor(nsId, name, defaultValue, validator) {
+            super(nsId, name);
+            this[_defaultValue] = defaultValue;
+            this[_validator] = validator;
+          }
+          [_symbol_utils.$finalize]() {
+            this[_symbol_utils.$content] = (0, _utils.getInteger)({
+              data: this[_symbol_utils.$content],
+              defaultValue: this[_defaultValue],
+              validate: this[_validator]
+            });
+          }
+          [_symbol_utils.$clean](builder) {
+            super[_symbol_utils.$clean](builder);
+            delete this[_defaultValue];
+            delete this[_validator];
+          }
+        }
+        exports.IntegerObject = IntegerObject;
+        class Option01 extends IntegerObject {
+          constructor(nsId, name) {
+            super(nsId, name, 0, n => n === 1);
+          }
+        }
+        exports.Option01 = Option01;
+        class Option10 extends IntegerObject {
+          constructor(nsId, name) {
+            super(nsId, name, 1, n => n === 0);
+          }
+        }
+        exports.Option10 = Option10;
+
+        /***/
+}),
 /* 88 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
@@ -53963,55 +53966,239 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
         Object.defineProperty(exports, "__esModule", ({
           value: true
         }));
-        exports.DataHandler = void 0;
-        var _xfa_object = __w_pdfjs_require__(78);
-        class DataHandler {
-          constructor(root, data) {
-            this.data = data;
-            this.dataset = root.datasets || null;
+        exports.createDataNode = createDataNode;
+        exports.searchNode = searchNode;
+        var _symbol_utils = __w_pdfjs_require__(78);
+        var _util = __w_pdfjs_require__(2);
+        const namePattern = /^[^.[]+/;
+        const indexPattern = /^[^\]]+/;
+        const operators = {
+          dot: 0,
+          dotDot: 1,
+          dotHash: 2,
+          dotBracket: 3,
+          dotParen: 4
+        };
+        const shortcuts = new Map([["$data", (root, current) => root.datasets ? root.datasets.data : root], ["$record", (root, current) => (root.datasets ? root.datasets.data : root)[_symbol_utils.$getChildren]()[0]], ["$template", (root, current) => root.template], ["$connectionSet", (root, current) => root.connectionSet], ["$form", (root, current) => root.form], ["$layout", (root, current) => root.layout], ["$host", (root, current) => root.host], ["$dataWindow", (root, current) => root.dataWindow], ["$event", (root, current) => root.event], ["!", (root, current) => root.datasets], ["$xfa", (root, current) => root], ["xfa", (root, current) => root], ["$", (root, current) => current]]);
+        const somCache = new WeakMap();
+        function parseIndex(index) {
+          index = index.trim();
+          if (index === "*") {
+            return Infinity;
           }
-          serialize(storage) {
-            const stack = [[-1, this.data[_xfa_object.$getChildren]()]];
-            while (stack.length > 0) {
-              const last = stack.at(-1);
-              const [i, children] = last;
-              if (i + 1 === children.length) {
-                stack.pop();
+          return parseInt(index, 10) || 0;
+        }
+        function parseExpression(expr, dotDotAllowed, noExpr = true) {
+          let match = expr.match(namePattern);
+          if (!match) {
+            return null;
+          }
+          let [name] = match;
+          const parsed = [{
+            name,
+            cacheName: "." + name,
+            index: 0,
+            js: null,
+            formCalc: null,
+            operator: operators.dot
+          }];
+          let pos = name.length;
+          while (pos < expr.length) {
+            const spos = pos;
+            const char = expr.charAt(pos++);
+            if (char === "[") {
+              match = expr.slice(pos).match(indexPattern);
+              if (!match) {
+                (0, _util.warn)("XFA - Invalid index in SOM expression");
+                return null;
+              }
+              parsed.at(-1).index = parseIndex(match[0]);
+              pos += match[0].length + 1;
+              continue;
+            }
+            let operator;
+            switch (expr.charAt(pos)) {
+              case ".":
+                if (!dotDotAllowed) {
+                  return null;
+                }
+                pos++;
+                operator = operators.dotDot;
+                break;
+              case "#":
+                pos++;
+                operator = operators.dotHash;
+                break;
+              case "[":
+                if (noExpr) {
+                  (0, _util.warn)("XFA - SOM expression contains a FormCalc subexpression which is not supported for now.");
+                  return null;
+                }
+                operator = operators.dotBracket;
+                break;
+              case "(":
+                if (noExpr) {
+                  (0, _util.warn)("XFA - SOM expression contains a JavaScript subexpression which is not supported for now.");
+                  return null;
+                }
+                operator = operators.dotParen;
+                break;
+              default:
+                operator = operators.dot;
+                break;
+            }
+            match = expr.slice(pos).match(namePattern);
+            if (!match) {
+              break;
+            }
+            [name] = match;
+            pos += name.length;
+            parsed.push({
+              name,
+              cacheName: expr.slice(spos, pos),
+              operator,
+              index: 0,
+              js: null,
+              formCalc: null
+            });
+          }
+          return parsed;
+        }
+        function searchNode(root, container, expr, dotDotAllowed = true, useCache = true) {
+          const parsed = parseExpression(expr, dotDotAllowed);
+          if (!parsed) {
+            return null;
+          }
+          const fn = shortcuts.get(parsed[0].name);
+          let i = 0;
+          let isQualified;
+          if (fn) {
+            isQualified = true;
+            root = [fn(root, container)];
+            i = 1;
+          } else {
+            isQualified = container === null;
+            root = [container || root];
+          }
+          for (let ii = parsed.length; i < ii; i++) {
+            const {
+              name,
+              cacheName,
+              operator,
+              index
+            } = parsed[i];
+            const nodes = [];
+            for (const node of root) {
+              if (!node.isXFAObject) {
                 continue;
               }
-              const child = children[++last[0]];
-              const storageEntry = storage.get(child[_xfa_object.$uid]);
-              if (storageEntry) {
-                child[_xfa_object.$setValue](storageEntry);
-              } else {
-                const attributes = child[_xfa_object.$getAttributes]();
-                for (const value of attributes.values()) {
-                  const entry = storage.get(value[_xfa_object.$uid]);
-                  if (entry) {
-                    value[_xfa_object.$setValue](entry);
+              let children, cached;
+              if (useCache) {
+                cached = somCache.get(node);
+                if (!cached) {
+                  cached = new Map();
+                  somCache.set(node, cached);
+                }
+                children = cached.get(cacheName);
+              }
+              if (!children) {
+                switch (operator) {
+                  case operators.dot:
+                    children = node[_symbol_utils.$getChildrenByName](name, false);
                     break;
-                  }
+                  case operators.dotDot:
+                    children = node[_symbol_utils.$getChildrenByName](name, true);
+                    break;
+                  case operators.dotHash:
+                    children = node[_symbol_utils.$getChildrenByClass](name);
+                    children = children.isXFAObjectArray ? children.children : [children];
+                    break;
+                  default:
+                    break;
+                }
+                if (useCache) {
+                  cached.set(cacheName, children);
                 }
               }
-              const nodes = child[_xfa_object.$getChildren]();
-              if (nodes.length > 0) {
-                stack.push([-1, nodes]);
+              if (children.length > 0) {
+                nodes.push(children);
               }
             }
-            const buf = [`<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">`];
-            if (this.dataset) {
-              for (const child of this.dataset[_xfa_object.$getChildren]()) {
-                if (child[_xfa_object.$nodeName] !== "data") {
-                  child[_xfa_object.$toString](buf);
-                }
+            if (nodes.length === 0 && !isQualified && i === 0) {
+              const parent = container[_symbol_utils.$getParent]();
+              container = parent;
+              if (!container) {
+                return null;
               }
+              i = -1;
+              root = [container];
+              continue;
             }
-            this.data[_xfa_object.$toString](buf);
-            buf.push("</xfa:datasets>");
-            return buf.join("");
+            root = isFinite(index) ? nodes.filter(node => index < node.length).map(node => node[index]) : nodes.flat();
           }
+          if (root.length === 0) {
+            return null;
+          }
+          return root;
         }
-        exports.DataHandler = DataHandler;
+        function createDataNode(root, container, expr) {
+          const parsed = parseExpression(expr);
+          if (!parsed) {
+            return null;
+          }
+          if (parsed.some(x => x.operator === operators.dotDot)) {
+            return null;
+          }
+          const fn = shortcuts.get(parsed[0].name);
+          let i = 0;
+          if (fn) {
+            root = fn(root, container);
+            i = 1;
+          } else {
+            root = container || root;
+          }
+          for (let ii = parsed.length; i < ii; i++) {
+            const {
+              name,
+              operator,
+              index
+            } = parsed[i];
+            if (!isFinite(index)) {
+              parsed[i].index = 0;
+              return root.createNodes(parsed.slice(i));
+            }
+            let children;
+            switch (operator) {
+              case operators.dot:
+                children = root[_symbol_utils.$getChildrenByName](name, false);
+                break;
+              case operators.dotDot:
+                children = root[_symbol_utils.$getChildrenByName](name, true);
+                break;
+              case operators.dotHash:
+                children = root[_symbol_utils.$getChildrenByClass](name);
+                children = children.isXFAObjectArray ? children.children : [children];
+                break;
+              default:
+                break;
+            }
+            if (children.length === 0) {
+              return root.createNodes(parsed.slice(i));
+            }
+            if (index < children.length) {
+              const child = children[index];
+              if (!child.isXFAObject) {
+                (0, _util.warn)(`XFA - Cannot create a node.`);
+                return null;
+              }
+              root = child;
+            } else {
+              parsed[i].index = index - children.length;
+              return root.createNodes(parsed.slice(i));
+            }
+          }
+          return null;
+        }
 
         /***/
 }),
@@ -54023,10 +54210,70 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
         Object.defineProperty(exports, "__esModule", ({
           value: true
         }));
+        exports.DataHandler = void 0;
+        var _symbol_utils = __w_pdfjs_require__(78);
+        class DataHandler {
+          constructor(root, data) {
+            this.data = data;
+            this.dataset = root.datasets || null;
+          }
+          serialize(storage) {
+            const stack = [[-1, this.data[_symbol_utils.$getChildren]()]];
+            while (stack.length > 0) {
+              const last = stack.at(-1);
+              const [i, children] = last;
+              if (i + 1 === children.length) {
+                stack.pop();
+                continue;
+              }
+              const child = children[++last[0]];
+              const storageEntry = storage.get(child[_symbol_utils.$uid]);
+              if (storageEntry) {
+                child[_symbol_utils.$setValue](storageEntry);
+              } else {
+                const attributes = child[_symbol_utils.$getAttributes]();
+                for (const value of attributes.values()) {
+                  const entry = storage.get(value[_symbol_utils.$uid]);
+                  if (entry) {
+                    value[_symbol_utils.$setValue](entry);
+                    break;
+                  }
+                }
+              }
+              const nodes = child[_symbol_utils.$getChildren]();
+              if (nodes.length > 0) {
+                stack.push([-1, nodes]);
+              }
+            }
+            const buf = [`<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">`];
+            if (this.dataset) {
+              for (const child of this.dataset[_symbol_utils.$getChildren]()) {
+                if (child[_symbol_utils.$nodeName] !== "data") {
+                  child[_symbol_utils.$toString](buf);
+                }
+              }
+            }
+            this.data[_symbol_utils.$toString](buf);
+            buf.push("</xfa:datasets>");
+            return buf.join("");
+          }
+        }
+        exports.DataHandler = DataHandler;
+
+        /***/
+}),
+/* 90 */
+/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
+
+
+
+        Object.defineProperty(exports, "__esModule", ({
+          value: true
+        }));
         exports.XFAParser = void 0;
-        var _xfa_object = __w_pdfjs_require__(78);
-        var _xml_parser = __w_pdfjs_require__(67);
-        var _builder = __w_pdfjs_require__(90);
+        var _symbol_utils = __w_pdfjs_require__(78);
+        var _xml_parser = __w_pdfjs_require__(71);
+        var _builder = __w_pdfjs_require__(91);
         var _util = __w_pdfjs_require__(2);
         class XFAParser extends _xml_parser.XMLParserBase {
           constructor(rootNameSpace = null, richText = false) {
@@ -54048,22 +54295,22 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             if (this._errorCode !== _xml_parser.XMLParserErrorCode.NoError) {
               return undefined;
             }
-            this._current[_xfa_object.$finalize]();
+            this._current[_symbol_utils.$finalize]();
             return this._current.element;
           }
           onText(text) {
             text = text.replace(this._nbsps, match => match.slice(1) + " ");
-            if (this._richText || this._current[_xfa_object.$acceptWhitespace]()) {
-              this._current[_xfa_object.$onText](text, this._richText);
+            if (this._richText || this._current[_symbol_utils.$acceptWhitespace]()) {
+              this._current[_symbol_utils.$onText](text, this._richText);
               return;
             }
             if (this._whiteRegex.test(text)) {
               return;
             }
-            this._current[_xfa_object.$onText](text.trim());
+            this._current[_symbol_utils.$onText](text.trim());
           }
           onCdata(text) {
-            this._current[_xfa_object.$onText](text);
+            this._current[_symbol_utils.$onText](text);
           }
           _mkAttributes(attributes, tagName) {
             let namespace = null;
@@ -54093,9 +54340,9 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 if (i === -1) {
                   attributeObj[name] = value;
                 } else {
-                  let nsAttrs = attributeObj[_xfa_object.$nsAttributes];
+                  let nsAttrs = attributeObj[_symbol_utils.$nsAttributes];
                   if (!nsAttrs) {
-                    nsAttrs = attributeObj[_xfa_object.$nsAttributes] = Object.create(null);
+                    nsAttrs = attributeObj[_symbol_utils.$nsAttributes] = Object.create(null);
                   }
                   const [ns, attrName] = [name.slice(0, i), name.slice(i + 1)];
                   const attrs = nsAttrs[ns] ||= Object.create(null);
@@ -54122,13 +54369,13 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               namespace,
               prefixes
             });
-            node[_xfa_object.$globalData] = this._globalData;
+            node[_symbol_utils.$globalData] = this._globalData;
             if (isEmpty) {
-              node[_xfa_object.$finalize]();
-              if (this._current[_xfa_object.$onChild](node)) {
-                node[_xfa_object.$setId](this._ids);
+              node[_symbol_utils.$finalize]();
+              if (this._current[_symbol_utils.$onChild](node)) {
+                node[_symbol_utils.$setId](this._ids);
               }
-              node[_xfa_object.$clean](this._builder);
+              node[_symbol_utils.$clean](this._builder);
               return;
             }
             this._stack.push(this._current);
@@ -54136,19 +54383,19 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           }
           onEndElement(name) {
             const node = this._current;
-            if (node[_xfa_object.$isCDATAXml]() && typeof node[_xfa_object.$content] === "string") {
+            if (node[_symbol_utils.$isCDATAXml]() && typeof node[_symbol_utils.$content] === "string") {
               const parser = new XFAParser();
               parser._globalData = this._globalData;
-              const root = parser.parse(node[_xfa_object.$content]);
-              node[_xfa_object.$content] = null;
-              node[_xfa_object.$onChild](root);
+              const root = parser.parse(node[_symbol_utils.$content]);
+              node[_symbol_utils.$content] = null;
+              node[_symbol_utils.$onChild](root);
             }
-            node[_xfa_object.$finalize]();
+            node[_symbol_utils.$finalize]();
             this._current = this._stack.pop();
-            if (this._current[_xfa_object.$onChild](node)) {
-              node[_xfa_object.$setId](this._ids);
+            if (this._current[_symbol_utils.$onChild](node)) {
+              node[_symbol_utils.$setId](this._ids);
             }
-            node[_xfa_object.$clean](this._builder);
+            node[_symbol_utils.$clean](this._builder);
           }
           onError(code) {
             this._errorCode = code;
@@ -54158,7 +54405,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
 
         /***/
 }),
-/* 90 */
+/* 91 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -54167,28 +54414,29 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           value: true
         }));
         exports.Builder = void 0;
-        var _namespaces = __w_pdfjs_require__(80);
-        var _xfa_object = __w_pdfjs_require__(78);
-        var _setup = __w_pdfjs_require__(91);
-        var _template = __w_pdfjs_require__(83);
-        var _unknown = __w_pdfjs_require__(100);
+        var _namespaces = __w_pdfjs_require__(81);
+        var _symbol_utils = __w_pdfjs_require__(78);
+        var _setup = __w_pdfjs_require__(92);
+        var _template = __w_pdfjs_require__(80);
+        var _unknown = __w_pdfjs_require__(101);
         var _util = __w_pdfjs_require__(2);
+        var _xfa_object = __w_pdfjs_require__(87);
         class Root extends _xfa_object.XFAObject {
           constructor(ids) {
             super(-1, "root", Object.create(null));
             this.element = null;
-            this[_xfa_object.$ids] = ids;
+            this[_symbol_utils.$ids] = ids;
           }
-          [_xfa_object.$onChild](child) {
+          [_symbol_utils.$onChild](child) {
             this.element = child;
             return true;
           }
-          [_xfa_object.$finalize]() {
-            super[_xfa_object.$finalize]();
+          [_symbol_utils.$finalize]() {
+            super[_symbol_utils.$finalize]();
             if (this.element.template instanceof _template.Template) {
-              this[_xfa_object.$ids].set(_xfa_object.$root, this.element);
-              this.element.template[_xfa_object.$resolvePrototypes](this[_xfa_object.$ids]);
-              this.element.template[_xfa_object.$ids] = this[_xfa_object.$ids];
+              this[_symbol_utils.$ids].set(_symbol_utils.$root, this.element);
+              this.element.template[_symbol_utils.$resolvePrototypes](this[_symbol_utils.$ids]);
+              this.element.template[_symbol_utils.$ids] = this[_symbol_utils.$ids];
             }
           }
         }
@@ -54196,7 +54444,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           constructor() {
             super(-1, "", Object.create(null));
           }
-          [_xfa_object.$onChild](_) {
+          [_symbol_utils.$onChild](_) {
             return false;
           }
         }
@@ -54229,9 +54477,9 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             if (prefixes) {
               this._addNamespacePrefix(prefixes);
             }
-            if (attributes.hasOwnProperty(_xfa_object.$nsAttributes)) {
+            if (attributes.hasOwnProperty(_symbol_utils.$nsAttributes)) {
               const dataTemplate = _setup.NamespaceSetUp.datasets;
-              const nsAttrs = attributes[_xfa_object.$nsAttributes];
+              const nsAttrs = attributes[_symbol_utils.$nsAttributes];
               let xfaAttrs = null;
               for (const [ns, attrs] of Object.entries(nsAttrs)) {
                 const nsToUse = this._getNamespaceToUse(ns);
@@ -54243,21 +54491,21 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                 }
               }
               if (xfaAttrs) {
-                attributes[_xfa_object.$nsAttributes] = xfaAttrs;
+                attributes[_symbol_utils.$nsAttributes] = xfaAttrs;
               } else {
-                delete attributes[_xfa_object.$nsAttributes];
+                delete attributes[_symbol_utils.$nsAttributes];
               }
             }
             const namespaceToUse = this._getNamespaceToUse(nsPrefix);
             const node = namespaceToUse?.[_namespaces.$buildXFAObject](name, attributes) || new Empty();
-            if (node[_xfa_object.$isNsAgnostic]()) {
+            if (node[_symbol_utils.$isNsAgnostic]()) {
               this._nsAgnosticLevel++;
             }
-            if (hasNamespaceDef || prefixes || node[_xfa_object.$isNsAgnostic]()) {
-              node[_xfa_object.$cleanup] = {
+            if (hasNamespaceDef || prefixes || node[_symbol_utils.$isNsAgnostic]()) {
+              node[_symbol_utils.$cleanup] = {
                 hasNamespace: hasNamespaceDef,
                 prefixes,
-                nsAgnostic: node[_xfa_object.$isNsAgnostic]()
+                nsAgnostic: node[_symbol_utils.$isNsAgnostic]()
               };
             }
             return node;
@@ -54336,7 +54584,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
 
         /***/
 }),
-/* 91 */
+/* 92 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -54345,15 +54593,15 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           value: true
         }));
         exports.NamespaceSetUp = void 0;
-        var _config = __w_pdfjs_require__(92);
-        var _connection_set = __w_pdfjs_require__(93);
-        var _datasets = __w_pdfjs_require__(94);
-        var _locale_set = __w_pdfjs_require__(95);
-        var _signature = __w_pdfjs_require__(96);
-        var _stylesheet = __w_pdfjs_require__(97);
-        var _template = __w_pdfjs_require__(83);
-        var _xdp = __w_pdfjs_require__(98);
-        var _xhtml = __w_pdfjs_require__(99);
+        var _config = __w_pdfjs_require__(93);
+        var _connection_set = __w_pdfjs_require__(94);
+        var _datasets = __w_pdfjs_require__(95);
+        var _locale_set = __w_pdfjs_require__(96);
+        var _signature = __w_pdfjs_require__(97);
+        var _stylesheet = __w_pdfjs_require__(98);
+        var _template = __w_pdfjs_require__(80);
+        var _xdp = __w_pdfjs_require__(99);
+        var _xhtml = __w_pdfjs_require__(100);
         const NamespaceSetUp = {
           config: _config.ConfigNamespace,
           connection: _connection_set.ConnectionSetNamespace,
@@ -54369,7 +54617,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
 
         /***/
 }),
-/* 92 */
+/* 93 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -54378,9 +54626,10 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           value: true
         }));
         exports.ConfigNamespace = void 0;
-        var _namespaces = __w_pdfjs_require__(80);
-        var _xfa_object = __w_pdfjs_require__(78);
-        var _utils = __w_pdfjs_require__(79);
+        var _namespaces = __w_pdfjs_require__(81);
+        var _symbol_utils = __w_pdfjs_require__(78);
+        var _xfa_object = __w_pdfjs_require__(87);
+        var _utils = __w_pdfjs_require__(84);
         var _util = __w_pdfjs_require__(2);
         const CONFIG_NS_ID = _namespaces.NamespaceIds.config.id;
         class Acrobat extends _xfa_object.XFAObject {
@@ -54483,8 +54732,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           constructor(attributes) {
             super(CONFIG_NS_ID, "behaviorOverride");
           }
-          [_xfa_object.$finalize]() {
-            this[_xfa_object.$content] = new Map(this[_xfa_object.$content].trim().split(/\s+/).filter(x => x.includes(":")).map(x => x.split(":", 2)));
+          [_symbol_utils.$finalize]() {
+            this[_symbol_utils.$content] = new Map(this[_symbol_utils.$content].trim().split(/\s+/).filter(x => x.includes(":")).map(x => x.split(":", 2)));
           }
         }
         class Cache extends _xfa_object.XFAObject {
@@ -54699,8 +54948,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           constructor(attributes) {
             super(CONFIG_NS_ID, "exclude");
           }
-          [_xfa_object.$finalize]() {
-            this[_xfa_object.$content] = this[_xfa_object.$content].trim().split(/\s+/).filter(x => x && ["calculate", "close", "enter", "exit", "initialize", "ready", "validate"].includes(x));
+          [_symbol_utils.$finalize]() {
+            this[_symbol_utils.$content] = this[_symbol_utils.$content].trim().split(/\s+/).filter(x => x && ["calculate", "close", "enter", "exit", "initialize", "ready", "validate"].includes(x));
           }
         }
         class ExcludeNS extends _xfa_object.StringObject {
@@ -54898,11 +55147,11 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           constructor(attributes) {
             super(CONFIG_NS_ID, "packets");
           }
-          [_xfa_object.$finalize]() {
-            if (this[_xfa_object.$content] === "*") {
+          [_symbol_utils.$finalize]() {
+            if (this[_symbol_utils.$content] === "*") {
               return;
             }
-            this[_xfa_object.$content] = this[_xfa_object.$content].trim().split(/\s+/).filter(x => ["config", "datasets", "template", "xfdf", "xslt"].includes(x));
+            this[_symbol_utils.$content] = this[_symbol_utils.$content].trim().split(/\s+/).filter(x => ["config", "datasets", "template", "xfdf", "xslt"].includes(x));
           }
         }
         class PageOffset extends _xfa_object.XFAObject {
@@ -54924,13 +55173,13 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           constructor(attributes) {
             super(CONFIG_NS_ID, "pageRange");
           }
-          [_xfa_object.$finalize]() {
-            const numbers = this[_xfa_object.$content].trim().split(/\s+/).map(x => parseInt(x, 10));
+          [_symbol_utils.$finalize]() {
+            const numbers = this[_symbol_utils.$content].trim().split(/\s+/).map(x => parseInt(x, 10));
             const ranges = [];
             for (let i = 0, ii = numbers.length; i < ii; i += 2) {
               ranges.push(numbers.slice(i, i + 2));
             }
-            this[_xfa_object.$content] = ranges;
+            this[_symbol_utils.$content] = ranges;
           }
         }
         class Pagination extends _xfa_object.OptionObject {
@@ -55099,8 +55348,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           constructor(attributes) {
             super(CONFIG_NS_ID, "range");
           }
-          [_xfa_object.$finalize]() {
-            this[_xfa_object.$content] = this[_xfa_object.$content].trim().split(/\s*,\s*/, 2).map(range => range.split("-").map(x => parseInt(x.trim(), 10))).filter(range => range.every(x => !isNaN(x))).map(range => {
+          [_symbol_utils.$finalize]() {
+            this[_symbol_utils.$content] = this[_symbol_utils.$content].trim().split(/\s*,\s*/, 2).map(range => range.split("-").map(x => parseInt(x.trim(), 10))).filter(range => range.every(x => !isNaN(x))).map(range => {
               if (range.length === 1) {
                 range.push(range[0]);
               }
@@ -55112,11 +55361,11 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           constructor(attributes) {
             super(CONFIG_NS_ID, "record");
           }
-          [_xfa_object.$finalize]() {
-            this[_xfa_object.$content] = this[_xfa_object.$content].trim();
-            const n = parseInt(this[_xfa_object.$content], 10);
+          [_symbol_utils.$finalize]() {
+            this[_symbol_utils.$content] = this[_symbol_utils.$content].trim();
+            const n = parseInt(this[_symbol_utils.$content], 10);
             if (!isNaN(n) && n >= 0) {
-              this[_xfa_object.$content] = n;
+              this[_symbol_utils.$content] = n;
             }
           }
         }
@@ -55124,17 +55373,17 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           constructor(attributes) {
             super(CONFIG_NS_ID, "relevant");
           }
-          [_xfa_object.$finalize]() {
-            this[_xfa_object.$content] = this[_xfa_object.$content].trim().split(/\s+/);
+          [_symbol_utils.$finalize]() {
+            this[_symbol_utils.$content] = this[_symbol_utils.$content].trim().split(/\s+/);
           }
         }
         class Rename extends _xfa_object.ContentObject {
           constructor(attributes) {
             super(CONFIG_NS_ID, "rename");
           }
-          [_xfa_object.$finalize]() {
-            this[_xfa_object.$content] = this[_xfa_object.$content].trim();
-            if (this[_xfa_object.$content].toLowerCase().startsWith("xml") || new RegExp("[\\p{L}_][\\p{L}\\d._\\p{M}-]*", "u").test(this[_xfa_object.$content])) {
+          [_symbol_utils.$finalize]() {
+            this[_symbol_utils.$content] = this[_symbol_utils.$content].trim();
+            if (this[_symbol_utils.$content].toLowerCase().startsWith("xml") || new RegExp("[\\p{L}_][\\p{L}\\d._\\p{M}-]*", "u").test(this[_symbol_utils.$content])) {
               (0, _util.warn)("XFA - Rename: invalid XFA name");
             }
           }
@@ -55282,8 +55531,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           constructor(attributes) {
             super(CONFIG_NS_ID, "validateApprovalSignatures");
           }
-          [_xfa_object.$finalize]() {
-            this[_xfa_object.$content] = this[_xfa_object.$content].trim().split(/\s+/).filter(x => ["docReady", "postSign"].includes(x));
+          [_symbol_utils.$finalize]() {
+            this[_symbol_utils.$content] = this[_symbol_utils.$content].trim().split(/\s+/).filter(x => ["docReady", "postSign"].includes(x));
           }
         }
         class ValidationMessaging extends _xfa_object.OptionObject {
@@ -55335,16 +55584,16 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           constructor(attributes) {
             super(CONFIG_NS_ID, "window");
           }
-          [_xfa_object.$finalize]() {
-            const pair = this[_xfa_object.$content].trim().split(/\s*,\s*/, 2).map(x => parseInt(x, 10));
+          [_symbol_utils.$finalize]() {
+            const pair = this[_symbol_utils.$content].trim().split(/\s*,\s*/, 2).map(x => parseInt(x, 10));
             if (pair.some(x => isNaN(x))) {
-              this[_xfa_object.$content] = [0, 0];
+              this[_symbol_utils.$content] = [0, 0];
               return;
             }
             if (pair.length === 1) {
               pair.push(pair[0]);
             }
-            this[_xfa_object.$content] = pair;
+            this[_symbol_utils.$content] = pair;
           }
         }
         class Xdc extends _xfa_object.XFAObject {
@@ -55806,7 +56055,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
 
         /***/
 }),
-/* 93 */
+/* 94 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -55815,8 +56064,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           value: true
         }));
         exports.ConnectionSetNamespace = void 0;
-        var _namespaces = __w_pdfjs_require__(80);
-        var _xfa_object = __w_pdfjs_require__(78);
+        var _namespaces = __w_pdfjs_require__(81);
+        var _xfa_object = __w_pdfjs_require__(87);
         const CONNECTION_SET_NS_ID = _namespaces.NamespaceIds.connectionSet.id;
         class ConnectionSet extends _xfa_object.XFAObject {
           constructor(attributes) {
@@ -55978,7 +56227,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
 
         /***/
 }),
-/* 94 */
+/* 95 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -55987,14 +56236,15 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           value: true
         }));
         exports.DatasetsNamespace = void 0;
-        var _xfa_object = __w_pdfjs_require__(78);
-        var _namespaces = __w_pdfjs_require__(80);
+        var _symbol_utils = __w_pdfjs_require__(78);
+        var _namespaces = __w_pdfjs_require__(81);
+        var _xfa_object = __w_pdfjs_require__(87);
         const DATASETS_NS_ID = _namespaces.NamespaceIds.datasets.id;
         class Data extends _xfa_object.XmlObject {
           constructor(attributes) {
             super(DATASETS_NS_ID, "data", attributes);
           }
-          [_xfa_object.$isNsAgnostic]() {
+          [_symbol_utils.$isNsAgnostic]() {
             return true;
           }
         }
@@ -56004,12 +56254,12 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.data = null;
             this.Signature = null;
           }
-          [_xfa_object.$onChild](child) {
-            const name = child[_xfa_object.$nodeName];
-            if (name === "data" && child[_xfa_object.$namespaceId] === DATASETS_NS_ID || name === "Signature" && child[_xfa_object.$namespaceId] === _namespaces.NamespaceIds.signature.id) {
+          [_symbol_utils.$onChild](child) {
+            const name = child[_symbol_utils.$nodeName];
+            if (name === "data" && child[_symbol_utils.$namespaceId] === DATASETS_NS_ID || name === "Signature" && child[_symbol_utils.$namespaceId] === _namespaces.NamespaceIds.signature.id) {
               this[name] = child;
             }
-            this[_xfa_object.$appendChild](child);
+            this[_symbol_utils.$appendChild](child);
           }
         }
         class DatasetsNamespace {
@@ -56030,7 +56280,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
 
         /***/
 }),
-/* 95 */
+/* 96 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -56039,9 +56289,9 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           value: true
         }));
         exports.LocaleSetNamespace = void 0;
-        var _namespaces = __w_pdfjs_require__(80);
-        var _xfa_object = __w_pdfjs_require__(78);
-        var _utils = __w_pdfjs_require__(79);
+        var _namespaces = __w_pdfjs_require__(81);
+        var _xfa_object = __w_pdfjs_require__(87);
+        var _utils = __w_pdfjs_require__(84);
         const LOCALE_SET_NS_ID = _namespaces.NamespaceIds.localeSet.id;
         class CalendarSymbols extends _xfa_object.XFAObject {
           constructor(attributes) {
@@ -56289,7 +56539,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
 
         /***/
 }),
-/* 96 */
+/* 97 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -56298,8 +56548,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           value: true
         }));
         exports.SignatureNamespace = void 0;
-        var _namespaces = __w_pdfjs_require__(80);
-        var _xfa_object = __w_pdfjs_require__(78);
+        var _namespaces = __w_pdfjs_require__(81);
+        var _xfa_object = __w_pdfjs_require__(87);
         const SIGNATURE_NS_ID = _namespaces.NamespaceIds.signature.id;
         class Signature extends _xfa_object.XFAObject {
           constructor(attributes) {
@@ -56321,7 +56571,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
 
         /***/
 }),
-/* 97 */
+/* 98 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -56330,8 +56580,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           value: true
         }));
         exports.StylesheetNamespace = void 0;
-        var _namespaces = __w_pdfjs_require__(80);
-        var _xfa_object = __w_pdfjs_require__(78);
+        var _namespaces = __w_pdfjs_require__(81);
+        var _xfa_object = __w_pdfjs_require__(87);
         const STYLESHEET_NS_ID = _namespaces.NamespaceIds.stylesheet.id;
         class Stylesheet extends _xfa_object.XFAObject {
           constructor(attributes) {
@@ -56353,7 +56603,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
 
         /***/
 }),
-/* 98 */
+/* 99 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -56362,8 +56612,9 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           value: true
         }));
         exports.XdpNamespace = void 0;
-        var _namespaces = __w_pdfjs_require__(80);
-        var _xfa_object = __w_pdfjs_require__(78);
+        var _namespaces = __w_pdfjs_require__(81);
+        var _symbol_utils = __w_pdfjs_require__(78);
+        var _xfa_object = __w_pdfjs_require__(87);
         const XDP_NS_ID = _namespaces.NamespaceIds.xdp.id;
         class Xdp extends _xfa_object.XFAObject {
           constructor(attributes) {
@@ -56377,9 +56628,9 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this.stylesheet = new _xfa_object.XFAObjectArray();
             this.template = null;
           }
-          [_xfa_object.$onChildCheck](child) {
-            const ns = _namespaces.NamespaceIds[child[_xfa_object.$nodeName]];
-            return ns && child[_xfa_object.$namespaceId] === ns.id;
+          [_symbol_utils.$onChildCheck](child) {
+            const ns = _namespaces.NamespaceIds[child[_symbol_utils.$nodeName]];
+            return ns && child[_symbol_utils.$namespaceId] === ns.id;
           }
         }
         class XdpNamespace {
@@ -56397,7 +56648,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
 
         /***/
 }),
-/* 99 */
+/* 100 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -56406,10 +56657,11 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           value: true
         }));
         exports.XhtmlNamespace = void 0;
-        var _xfa_object = __w_pdfjs_require__(78);
-        var _namespaces = __w_pdfjs_require__(80);
-        var _html_utils = __w_pdfjs_require__(85);
-        var _utils = __w_pdfjs_require__(79);
+        var _symbol_utils = __w_pdfjs_require__(78);
+        var _namespaces = __w_pdfjs_require__(81);
+        var _html_utils = __w_pdfjs_require__(83);
+        var _utils = __w_pdfjs_require__(84);
+        var _xfa_object = __w_pdfjs_require__(87);
         const XHTML_NS_ID = _namespaces.NamespaceIds.xhtml.id;
         const $richText = Symbol();
         const VALID_STYLES = new Set(["color", "font", "font-family", "font-size", "font-stretch", "font-style", "font-weight", "margin", "margin-bottom", "margin-left", "margin-right", "margin-top", "letter-spacing", "line-height", "orphans", "page-break-after", "page-break-before", "page-break-inside", "tab-interval", "tab-stop", "text-align", "text-decoration", "text-indent", "vertical-align", "widows", "kerning-mode", "xfa-font-horizontal-scale", "xfa-font-vertical-scale", "xfa-spacerun", "xfa-tab-stops"]);
@@ -56433,18 +56685,10 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             }
             let newValue = value;
             if (mapping) {
-              if (typeof mapping === "string") {
-                newValue = mapping;
-              } else {
-                newValue = mapping(value, original);
-              }
+              newValue = typeof mapping === "string" ? mapping : mapping(value, original);
             }
             if (key.endsWith("scale")) {
-              if (style.transform) {
-                style.transform = `${style[key]} ${newValue}`;
-              } else {
-                style.transform = newValue;
-              }
+              style.transform = style.transform ? `${style[key]} ${newValue}` : newValue;
             } else {
               style[key.replaceAll(/-([a-zA-Z])/g, (_, x) => x.toUpperCase())] = newValue;
             }
@@ -56455,7 +56699,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               weight: style.fontWeight || "normal",
               posture: style.fontStyle || "normal",
               size: original.fontSize || 0
-            }, node, node[_xfa_object.$globalData].fontFinder, style);
+            }, node, node[_symbol_utils.$globalData].fontFinder, style);
           }
           if (richText && style.verticalAlign && style.verticalAlign !== "0px" && style.fontSize) {
             const SUB_SUPER_SCRIPT_FACTOR = 0.583;
@@ -56476,7 +56720,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           }
           return node.style.trim().split(/\s*;\s*/).filter(s => !!s).map(s => s.split(/\s*:\s*/, 2)).filter(([key, value]) => {
             if (key === "font-family") {
-              node[_xfa_object.$globalData].usedTypefaces.add(value);
+              node[_symbol_utils.$globalData].usedTypefaces.add(value);
             }
             return VALID_STYLES.has(key);
           }).map(kv => kv.join(":")).join(";");
@@ -56488,14 +56732,14 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             this[$richText] = false;
             this.style = attributes.style || "";
           }
-          [_xfa_object.$clean](builder) {
-            super[_xfa_object.$clean](builder);
+          [_symbol_utils.$clean](builder) {
+            super[_symbol_utils.$clean](builder);
             this.style = checkStyle(this);
           }
-          [_xfa_object.$acceptWhitespace]() {
-            return !NoWhites.has(this[_xfa_object.$nodeName]);
+          [_symbol_utils.$acceptWhitespace]() {
+            return !NoWhites.has(this[_symbol_utils.$nodeName]);
           }
-          [_xfa_object.$onText](str, richText = false) {
+          [_symbol_utils.$onText](str, richText = false) {
             if (!richText) {
               str = str.replaceAll(crlfRegExp, "");
               if (!this.style.includes("xfa-spacerun:yes")) {
@@ -56505,10 +56749,10 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               this[$richText] = true;
             }
             if (str) {
-              this[_xfa_object.$content] += str;
+              this[_symbol_utils.$content] += str;
             }
           }
-          [_xfa_object.$pushGlyphs](measure, mustPop = true) {
+          [_symbol_utils.$pushGlyphs](measure, mustPop = true) {
             const xfaFont = Object.create(null);
             const margin = {
               top: NaN,
@@ -56575,38 +56819,38 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               }
             }
             measure.pushData(xfaFont, margin, lineHeight);
-            if (this[_xfa_object.$content]) {
-              measure.addString(this[_xfa_object.$content]);
+            if (this[_symbol_utils.$content]) {
+              measure.addString(this[_symbol_utils.$content]);
             } else {
-              for (const child of this[_xfa_object.$getChildren]()) {
-                if (child[_xfa_object.$nodeName] === "#text") {
-                  measure.addString(child[_xfa_object.$content]);
+              for (const child of this[_symbol_utils.$getChildren]()) {
+                if (child[_symbol_utils.$nodeName] === "#text") {
+                  measure.addString(child[_symbol_utils.$content]);
                   continue;
                 }
-                child[_xfa_object.$pushGlyphs](measure);
+                child[_symbol_utils.$pushGlyphs](measure);
               }
             }
             if (mustPop) {
               measure.popFont();
             }
           }
-          [_xfa_object.$toHTML](availableSpace) {
+          [_symbol_utils.$toHTML](availableSpace) {
             const children = [];
-            this[_xfa_object.$extra] = {
+            this[_symbol_utils.$extra] = {
               children
             };
-            this[_xfa_object.$childrenToHTML]({});
-            if (children.length === 0 && !this[_xfa_object.$content]) {
+            this[_symbol_utils.$childrenToHTML]({});
+            if (children.length === 0 && !this[_symbol_utils.$content]) {
               return _utils.HTMLResult.EMPTY;
             }
             let value;
             if (this[$richText]) {
-              value = this[_xfa_object.$content] ? this[_xfa_object.$content].replaceAll(crlfForRichTextRegExp, "\n") : undefined;
+              value = this[_symbol_utils.$content] ? this[_symbol_utils.$content].replaceAll(crlfForRichTextRegExp, "\n") : undefined;
             } else {
-              value = this[_xfa_object.$content] || undefined;
+              value = this[_symbol_utils.$content] || undefined;
             }
             return _utils.HTMLResult.success({
-              name: this[_xfa_object.$nodeName],
+              name: this[_symbol_utils.$nodeName],
               attributes: {
                 href: this.href,
                 style: mapStyle(this.style, this, this[$richText])
@@ -56626,11 +56870,11 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           constructor(attributes) {
             super(attributes, "b");
           }
-          [_xfa_object.$pushGlyphs](measure) {
+          [_symbol_utils.$pushGlyphs](measure) {
             measure.pushFont({
               weight: "bold"
             });
-            super[_xfa_object.$pushGlyphs](measure);
+            super[_symbol_utils.$pushGlyphs](measure);
             measure.popFont();
           }
         }
@@ -56638,8 +56882,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           constructor(attributes) {
             super(attributes, "body");
           }
-          [_xfa_object.$toHTML](availableSpace) {
-            const res = super[_xfa_object.$toHTML](availableSpace);
+          [_symbol_utils.$toHTML](availableSpace) {
+            const res = super[_symbol_utils.$toHTML](availableSpace);
             const {
               html
             } = res;
@@ -56655,13 +56899,13 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           constructor(attributes) {
             super(attributes, "br");
           }
-          [_xfa_object.$text]() {
+          [_symbol_utils.$text]() {
             return "\n";
           }
-          [_xfa_object.$pushGlyphs](measure) {
+          [_symbol_utils.$pushGlyphs](measure) {
             measure.addString("\n");
           }
-          [_xfa_object.$toHTML](availableSpace) {
+          [_symbol_utils.$toHTML](availableSpace) {
             return _utils.HTMLResult.success({
               name: "br"
             });
@@ -56671,12 +56915,12 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           constructor(attributes) {
             super(attributes, "html");
           }
-          [_xfa_object.$toHTML](availableSpace) {
+          [_symbol_utils.$toHTML](availableSpace) {
             const children = [];
-            this[_xfa_object.$extra] = {
+            this[_symbol_utils.$extra] = {
               children
             };
-            this[_xfa_object.$childrenToHTML]({});
+            this[_symbol_utils.$childrenToHTML]({});
             if (children.length === 0) {
               return _utils.HTMLResult.success({
                 name: "div",
@@ -56684,7 +56928,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                   class: ["xfaRich"],
                   style: {}
                 },
-                value: this[_xfa_object.$content] || ""
+                value: this[_symbol_utils.$content] || ""
               });
             }
             if (children.length === 1) {
@@ -56707,11 +56951,11 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           constructor(attributes) {
             super(attributes, "i");
           }
-          [_xfa_object.$pushGlyphs](measure) {
+          [_symbol_utils.$pushGlyphs](measure) {
             measure.pushFont({
               posture: "italic"
             });
-            super[_xfa_object.$pushGlyphs](measure);
+            super[_symbol_utils.$pushGlyphs](measure);
             measure.popFont();
           }
         }
@@ -56729,18 +56973,18 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           constructor(attributes) {
             super(attributes, "p");
           }
-          [_xfa_object.$pushGlyphs](measure) {
-            super[_xfa_object.$pushGlyphs](measure, false);
+          [_symbol_utils.$pushGlyphs](measure) {
+            super[_symbol_utils.$pushGlyphs](measure, false);
             measure.addString("\n");
             measure.addPara();
             measure.popFont();
           }
-          [_xfa_object.$text]() {
-            const siblings = this[_xfa_object.$getParent]()[_xfa_object.$getChildren]();
+          [_symbol_utils.$text]() {
+            const siblings = this[_symbol_utils.$getParent]()[_symbol_utils.$getChildren]();
             if (siblings.at(-1) === this) {
-              return super[_xfa_object.$text]();
+              return super[_symbol_utils.$text]();
             }
-            return super[_xfa_object.$text]() + "\n";
+            return super[_symbol_utils.$text]() + "\n";
           }
         }
         class Span extends XhtmlObject {
@@ -56814,7 +57058,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
 
         /***/
 }),
-/* 100 */
+/* 101 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -56823,8 +57067,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           value: true
         }));
         exports.UnknownNamespace = void 0;
-        var _namespaces = __w_pdfjs_require__(80);
-        var _xfa_object = __w_pdfjs_require__(78);
+        var _namespaces = __w_pdfjs_require__(81);
+        var _xfa_object = __w_pdfjs_require__(87);
         class UnknownNamespace {
           constructor(nsId) {
             this.namespaceId = nsId;
@@ -56837,7 +57081,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
 
         /***/
 }),
-/* 101 */
+/* 102 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -56848,7 +57092,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
         exports.DatasetReader = void 0;
         var _util = __w_pdfjs_require__(2);
         var _core_utils = __w_pdfjs_require__(3);
-        var _xml_parser = __w_pdfjs_require__(67);
+        var _xml_parser = __w_pdfjs_require__(71);
         function decodeString(str) {
           try {
             return (0, _util.stringToUTF8String)(str);
@@ -56882,7 +57126,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               });
               try {
                 parser.parseFromString(data["xdp:xdp"]);
-              } catch (_) { }
+              } catch { }
               this.node = parser.node;
             }
           }
@@ -56905,7 +57149,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
 
         /***/
 }),
-/* 102 */
+/* 103 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -56919,8 +57163,9 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
         var _parser = __w_pdfjs_require__(16);
         var _core_utils = __w_pdfjs_require__(3);
         var _base_stream = __w_pdfjs_require__(5);
-        var _crypto = __w_pdfjs_require__(68);
+        var _crypto = __w_pdfjs_require__(74);
         class XRef {
+          #firstXRefStmPos = null;
           constructor(stream, pdfManager) {
             this.stream = stream;
             this.pdfManager = pdfManager;
@@ -57210,7 +57455,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               }
               return skipped;
             }
-            const gEndobjRegExp = /\b(endobj|\d+\s+\d+\s+obj|xref|trailer)\b/g;
+            const gEndobjRegExp = /\b(endobj|\d+\s+\d+\s+obj|xref|trailer\s*<<)\b/g;
             const gStartxrefRegExp = /\b(startxref|\d+\s+\d+\s+obj)\b/g;
             const objRegExp = /^(\d+)\s+(\d+)\s+obj\b/;
             const trailerBytes = new Uint8Array([116, 114, 97, 105, 108, 101, 114]);
@@ -57414,6 +57659,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
                   if (Number.isInteger(obj) && !this._xrefStms.has(obj)) {
                     this._xrefStms.add(obj);
                     this.startXRefQueue.push(obj);
+                    this.#firstXRefStmPos ??= obj;
                   }
                 } else if (Number.isInteger(obj)) {
                   if (!Number.isInteger(parser.getObj()) || !(0, _primitives.isCmd)(parser.getObj(), "obj") || !((obj = parser.getObj()) instanceof _base_stream.BaseStream)) {
@@ -57452,7 +57698,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             throw new _core_utils.XRefParseException();
           }
           get lastXRefStreamPos() {
-            return this._xrefStms.size > 0 ? Math.max(...this._xrefStms) : null;
+            return this.#firstXRefStmPos ?? (this._xrefStms.size > 0 ? Math.max(...this._xrefStms) : null);
           }
           getEntry(i) {
             const xrefEntry = this.entries[i];
@@ -57491,11 +57737,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             }
             this._pendingRefs.put(ref);
             try {
-              if (xrefEntry.uncompressed) {
-                xrefEntry = this.fetchUncompressed(ref, xrefEntry, suppressEncryption);
-              } else {
-                xrefEntry = this.fetchCompressed(ref, xrefEntry, suppressEncryption);
-              }
+              xrefEntry = xrefEntry.uncompressed ? this.fetchUncompressed(ref, xrefEntry, suppressEncryption) : this.fetchCompressed(ref, xrefEntry, suppressEncryption);
               this._pendingRefs.remove(ref);
             } catch (ex) {
               this._pendingRefs.remove(ref);
@@ -57540,11 +57782,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
               }
               throw new _core_utils.XRefEntryException(`Bad (uncompressed) XRef entry: ${ref}`);
             }
-            if (this.encrypt && !suppressEncryption) {
-              xrefEntry = parser.getObj(this.encrypt.createCipherTransform(num, gen));
-            } else {
-              xrefEntry = parser.getObj();
-            }
+            xrefEntry = this.encrypt && !suppressEncryption ? parser.getObj(this.encrypt.createCipherTransform(num, gen)) : parser.getObj();
             if (!(xrefEntry instanceof _base_stream.BaseStream)) {
               this._cacheMap.set(num, xrefEntry);
             }
@@ -57631,20 +57869,6 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
           }
         }
         exports.XRef = XRef;
-
-        /***/
-}),
-/* 103 */
-/***/ ((__unused_webpack_module, exports) => {
-
-
-
-        Object.defineProperty(exports, "__esModule", ({
-          value: true
-        }));
-        exports.isNodeJS = void 0;
-        const isNodeJS = typeof process === "object" && process + "" === "[object process]" && !process.versions.nw && !(process.versions.electron && process.type && process.type !== "browser");
-        exports.isNodeJS = isNodeJS;
 
         /***/
 }),
@@ -58090,9 +58314,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
             return reader;
           }
           cancelAllRequests(reason) {
-            if (this._fullRequestReader) {
-              this._fullRequestReader.cancel(reason);
-            }
+            this._fullRequestReader?.cancel(reason);
             for (const reader of this._rangeRequestReaders.slice(0)) {
               reader.cancel(reason);
             }
@@ -58210,43 +58432,6 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
 /******/ 		return module.exports;
       /******/
 }
-/******/
-/************************************************************************/
-/******/ 	/* webpack/runtime/define property getters */
-/******/ 	(() => {
-/******/ 		// define getter functions for harmony exports
-/******/ 		__w_pdfjs_require__.d = (exports, definition) => {
-/******/ 			for (var key in definition) {
-/******/ 				if (__w_pdfjs_require__.o(definition, key) && !__w_pdfjs_require__.o(exports, key)) {
-/******/ 					Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
-            /******/
-}
-          /******/
-}
-        /******/
-};
-      /******/
-})();
-/******/
-/******/ 	/* webpack/runtime/hasOwnProperty shorthand */
-/******/ 	(() => {
-/******/ 		__w_pdfjs_require__.o = (obj, prop) => (Object.prototype.hasOwnProperty.call(obj, prop))
-      /******/
-})();
-/******/
-/******/ 	/* webpack/runtime/make namespace object */
-/******/ 	(() => {
-/******/ 		// define __esModule on exports
-/******/ 		__w_pdfjs_require__.r = (exports) => {
-/******/ 			if (typeof Symbol !== 'undefined' && Symbol.toStringTag) {
-/******/ 				Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
-          /******/
-}
-/******/ 			Object.defineProperty(exports, '__esModule', { value: true });
-        /******/
-};
-      /******/
-})();
     /******/
     /************************************************************************/
     var __webpack_exports__ = {};
@@ -58265,8 +58450,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end`;
         }
       }));
       var _worker = __w_pdfjs_require__(1);
-      const pdfjsVersion = '3.7.107';
-      const pdfjsBuild = '036f855dc';
+      const pdfjsVersion = '3.11.174';
+      const pdfjsBuild = 'ce8716743';
     })();
 
 /******/ 	return __webpack_exports__;

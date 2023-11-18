@@ -16,6 +16,7 @@
       v-model:value="strokeOpacity"
     />
     <a-input-number
+      @keydown.stop
       :disabled="!canUse"
       style="width: 80px"
       v-model:value="strokeOpacity"
@@ -36,6 +37,7 @@
       v-model:value="strokeWidth"
     />
     <a-input-number
+      @keydown.stop
       :disabled="!canUse"
       style="width: 80px"
       v-model:value="strokeWidth"

@@ -1,128 +1,143 @@
 <template>
-  <div class="toolbar">
-    <a-dropdown>
-      <div class="menu-item" @click.prevent>File</div>
-      <template #overlay>
-        <a-menu>
-          <a-menu-item @click="openSvg">
-            <span>Open Svg</span>
-          </a-menu-item>
-          <a-menu-divider />
-          <a-menu-item @click="importImage">
-            <span>Import Image</span>
-          </a-menu-item>
-          <a-menu-item @click="importPdf">
-            <span>Import Pdf</span>
-          </a-menu-item>
-          <a-menu-divider />
-          <a-menu-item @click="exportSvg">
-            <span>Export Svg</span>
-          </a-menu-item>
-          <a-menu-item @click="exportImage">
-            <span>Export Image</span>
-          </a-menu-item>
-        </a-menu>
-      </template>
-    </a-dropdown>
-    <a-dropdown>
-      <div class="menu-item" @click.prevent>Edit</div>
-      <template #overlay>
-        <a-menu>
-          <a-menu-item @click="undo" :disabled="!canUndo">
-            <span>Undo</span>
-          </a-menu-item>
-          <a-menu-item @click="redo" :disabled="!canRedo">
-            <span>Redo</span>
-          </a-menu-item>
-          <a-menu-divider />
-          <a-menu-item @click="cut">
-            <span>Cut</span>
-          </a-menu-item>
-          <a-menu-item @click="copy">
-            <span>Copy</span>
-          </a-menu-item>
-          <a-menu-item @click="paste">
-            <span>Paste</span>
-          </a-menu-item>
-          <a-menu-divider />
-          <a-menu-item @click="remove">
-            <span>Delete</span>
-          </a-menu-item>
-        </a-menu>
-      </template>
-    </a-dropdown>
-    <a-dropdown @visibleChange="visibleChange">
-      <div class="menu-item" @click.prevent>View</div>
-      <template #overlay>
-        <a-menu>
-          <a-menu-item @click="toggleManualGuides">
-            <div class="flex flex-align-center" style="gap: 6px">
-              <svg
-                v-show="manualGuides"
-                width="17.5"
-                height="17.5"
-                fill="none"
-                viewBox="0 0 48 48"
-              >
-                <use xlink:href="#Check" />
-              </svg>
-              <span>Manual Guides</span>
-            </div>
-          </a-menu-item>
-          <a-menu-item @click="toggleGrid">
-            <div class="flex flex-align-center" style="gap: 6px">
-              <svg
-                v-show="showGrid"
-                width="17.5"
-                height="17.5"
-                fill="none"
-                viewBox="0 0 48 48"
-              >
-                <use xlink:href="#Check" />
-              </svg>
-              <span>Grid</span>
-            </div>
-          </a-menu-item>
-          <a-menu-item @click="toggleSmartGuides">
-            <div class="flex flex-align-center" style="gap: 6px">
-              <svg
-                v-show="smartGuides"
-                width="17.5"
-                height="17.5"
-                fill="none"
-                viewBox="0 0 48 48"
-              >
-                <use xlink:href="#Check" />
-              </svg>
-              <span>Smart Guides</span>
-            </div>
-          </a-menu-item>
-          <a-menu-divider />
-          <a-menu-item @click="toggleRulers">
-            <div class="flex flex-align-center" style="gap: 6px">
-              <svg
-                v-show="rulers"
-                width="17.5"
-                height="17.5"
-                fill="none"
-                viewBox="0 0 48 48"
-              >
-                <use xlink:href="#Check" />
-              </svg>
-              <span>Rulers</span>
-            </div>
-          </a-menu-item>
-          <!-- <a-menu-divider /> -->
-          <!-- <a-menu-item>
+  <div class="toolbar flex flex-algin-center flex-justify-between">
+    <div class="toolbar-item flex flex-align-center">
+      <a-dropdown>
+        <div class="menu-item" @click.prevent>File</div>
+        <template #overlay>
+          <a-menu>
+            <a-menu-item @click="openSvg">
+              <span>Open Svg</span>
+            </a-menu-item>
+            <a-menu-divider />
+            <a-menu-item @click="importImage">
+              <span>Import Image</span>
+            </a-menu-item>
+            <a-menu-item @click="importPdf">
+              <span>Import Pdf</span>
+            </a-menu-item>
+            <a-menu-divider />
+            <a-menu-item @click="exportSvg">
+              <span>Export Svg</span>
+            </a-menu-item>
+            <a-menu-item @click="exportImage">
+              <span>Export Image</span>
+            </a-menu-item>
+          </a-menu>
+        </template>
+      </a-dropdown>
+      <a-dropdown>
+        <div class="menu-item" @click.prevent>Edit</div>
+        <template #overlay>
+          <a-menu>
+            <a-menu-item @click="undo" :disabled="!canUndo">
+              <span>Undo</span>
+            </a-menu-item>
+            <a-menu-item @click="redo" :disabled="!canRedo">
+              <span>Redo</span>
+            </a-menu-item>
+            <a-menu-divider />
+            <a-menu-item @click="cut">
+              <span>Cut</span>
+            </a-menu-item>
+            <a-menu-item @click="copy">
+              <span>Copy</span>
+            </a-menu-item>
+            <a-menu-item @click="paste">
+              <span>Paste</span>
+            </a-menu-item>
+            <a-menu-divider />
+            <a-menu-item @click="remove">
+              <span>Delete</span>
+            </a-menu-item>
+          </a-menu>
+        </template>
+      </a-dropdown>
+      <a-dropdown @visibleChange="visibleChange">
+        <div class="menu-item" @click.prevent>View</div>
+        <template #overlay>
+          <a-menu>
+            <a-menu-item @click="toggleManualGuides">
+              <div class="flex flex-align-center" style="gap: 6px">
+                <svg
+                  v-show="manualGuides"
+                  width="17.5"
+                  height="17.5"
+                  fill="none"
+                  viewBox="0 0 48 48"
+                >
+                  <use xlink:href="#Check" />
+                </svg>
+                <span>Manual Guides</span>
+              </div>
+            </a-menu-item>
+            <a-menu-item @click="toggleGrid">
+              <div class="flex flex-align-center" style="gap: 6px">
+                <svg
+                  v-show="showGrid"
+                  width="17.5"
+                  height="17.5"
+                  fill="none"
+                  viewBox="0 0 48 48"
+                >
+                  <use xlink:href="#Check" />
+                </svg>
+                <span>Grid</span>
+              </div>
+            </a-menu-item>
+            <a-menu-item @click="toggleSmartGuides">
+              <div class="flex flex-align-center" style="gap: 6px">
+                <svg
+                  v-show="smartGuides"
+                  width="17.5"
+                  height="17.5"
+                  fill="none"
+                  viewBox="0 0 48 48"
+                >
+                  <use xlink:href="#Check" />
+                </svg>
+                <span>Smart Guides</span>
+              </div>
+            </a-menu-item>
+            <a-menu-divider />
+            <a-menu-item @click="toggleRulers">
+              <div class="flex flex-align-center" style="gap: 6px">
+                <svg
+                  v-show="rulers"
+                  width="17.5"
+                  height="17.5"
+                  fill="none"
+                  viewBox="0 0 48 48"
+                >
+                  <use xlink:href="#Check" />
+                </svg>
+                <span>Rulers</span>
+              </div>
+            </a-menu-item>
+            <a-menu-item @click="toggleTransparency">
+              <div class="flex flex-align-center" style="gap: 6px">
+                <svg
+                  v-show="transparency"
+                  width="17.5"
+                  height="17.5"
+                  fill="none"
+                  viewBox="0 0 48 48"
+                >
+                  <use xlink:href="#Check" />
+                </svg>
+                <span>transparency</span>
+              </div>
+            </a-menu-item>
+            <!-- <a-menu-divider /> -->
+            <!-- <a-menu-item>
             <a href="javascript:;">Zoom In</a>
           </a-menu-item>
           <a-menu-item>
             <a href="javascript:;">Zoom Out</a>
           </a-menu-item> -->
-        </a-menu>
-      </template>
-    </a-dropdown>
-    <!-- <a-dropdown>
+          </a-menu>
+        </template>
+      </a-dropdown>
+      <!-- <a-dropdown>
       <div class="menu-item" @click.prevent>Help</div>
       <template #overlay>
         <a-menu>
@@ -132,6 +147,30 @@
         </a-menu>
       </template>
     </a-dropdown> -->
+    </div>
+    <div class="toolbar-item flex flex-align-center">
+      <a-popover placement="bottomLeft">
+        <template #content>
+          <div class="theme-wrapper flex flex-align-center">
+            <div
+              v-for="color in colors"
+              :key="color"
+              class="theme-item"
+              @click="changeTheme(color)"
+              :style="{
+                background: color === colorPrimary ? 'none' : color,
+                border: color === colorPrimary ? `6px solid ${color}` : 'none',
+              }"
+            ></div>
+          </div>
+        </template>
+        <div class="menu-item">
+          <svg width="17.5" height="17.5" fill="none" viewBox="0 0 48 48">
+            <use xlink:href="#Setting" />
+          </svg>
+        </div>
+      </a-popover>
+    </div>
   </div>
 </template>
 <script>
@@ -139,6 +178,15 @@ import * as pdfjs from "pdfjs-dist";
 export default {
   data() {
     return {
+      colors: [
+        "#1677ff",
+        "#00b9e3",
+        "blueviolet",
+        "orange",
+        "#ff56ac",
+        "red",
+        "#03be03",
+      ],
       canUndo: false,
       canRedo: false,
       scale: 100,
@@ -146,6 +194,8 @@ export default {
       showGrid: false,
       smartGuides: false,
       rulers: false,
+      transparency: false,
+      colorPrimary: "",
     };
   },
   methods: {
@@ -154,6 +204,7 @@ export default {
       this.showGrid = self.stage.gridManager.enabled;
       this.smartGuides = self.stage.smartManager.enabled;
       this.rulers = self.stage.rulerManager.enabled;
+      this.transparency = self.stage.viewTool.transparency;
     },
     toggleManualGuides() {
       if (self.stage.manualManager.enabled) {
@@ -310,8 +361,20 @@ export default {
     remove() {
       self.stage.commands.delete();
     },
+    toggleTransparency() {
+      self.stage.viewTool.transparency = !self.stage.viewTool.transparency;
+    },
+    changeTheme(color) {
+      const el = document.documentElement;
+      getComputedStyle(el).getPropertyValue("--fx-color-primary");
+      el.style.setProperty("--fx-color-primary", color);
+      window.localStorage.colorPrimary = color;
+      this.colorPrimary = color;
+    },
   },
   mounted() {
+    this.colorPrimary = window.localStorage.getItem("colorPrimary");
+    this.colorPrimary && this.changeTheme(this.colorPrimary);
     const stage = self.stage;
     stage.board.addEventListener("undochange", () => {
       this.canUndo = stage.undoManager.canUndo();
@@ -346,5 +409,29 @@ export default {
 
 .toolbar .menu-item:hover {
   background: #ededed;
+}
+
+.theme-wrapper {
+  background: #ffffff;
+  border-radius: 4px;
+  padding: 16px;
+  gap: 10px;
+}
+
+.theme-item {
+  border-radius: 18px;
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  border: 4px;
+  /* box-shadow: inset 0 0 2px #cccccc; */
+}
+
+.theme-item:hover {
+  opacity: 0.76;
+}
+
+.theme-item:active {
+  opacity: 0.66;
 }
 </style>

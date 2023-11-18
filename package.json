@@ -10,8 +10,8 @@
   },
   "dependencies": {
     "ant-design-vue": "next",
-    "foxyjs": "^1.2.28",
-    "pdfjs-dist": "^3.7.107",
+    "foxyjs": "^1.2.29",
+    "pdfjs-dist": "^3.11.174",
     "vue": "^3.3.4"
   },
   "devDependencies": {

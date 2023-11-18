@@ -156,10 +156,11 @@ export default {
     },
     keydownEvent() {
       const stage = self.stage;
-      self.addEventListener("keydown", (event) => {
+      document.addEventListener("keydown", (event) => {
         const { code, ctrlKey, shiftKey } = event;
         if (code === "Escape") stage.toggleTool("transform-tool");
         if (stage.textInputMode) return;
+
         switch (code) {
           case "Space":
             this.currentTool !== "pan-tool" && (preTool = this.currentTool);
@@ -194,11 +195,23 @@ export default {
           case "KeyV":
             ctrlKey && stage.clipboardManager.paste();
             break;
+          case "ArrowUp":
+            stage.transformManager.move(0, -1);
+            break;
+          case "ArrowRight":
+            stage.transformManager.move(1, 0);
+            break;
+          case "ArrowDown":
+            stage.transformManager.move(0, 1);
+            break;
+          case "ArrowLeft":
+            stage.transformManager.move(-1, 0);
+            break;
           default:
         }
       });
 
-      self.addEventListener("keyup", (event) => {
+      document.addEventListener("keyup", (event) => {
         const { code } = event;
         switch (code) {
           case "Space":
