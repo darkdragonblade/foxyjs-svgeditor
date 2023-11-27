@@ -12,7 +12,7 @@
           style="margin-right: 12px"
           v-html="icon(item.label.replace('#', ''))"
         ></div>
-        <div>{{ item.label.replace("#", "") }}</div>
+        <div>{{ item.label }}</div>
       </div>
     </div>
     <div class="history-tab flex flex-align-center">
@@ -83,6 +83,10 @@ export default {
       this.position = stage.undoManager.position;
       this.canUndo = stage.undoManager.canUndo();
       this.canRedo = stage.undoManager.canRedo();
+      this.$nextTick(() => {
+        const active = document.querySelector(".history-item-active");
+        active.scrollIntoView({ behavior: "smooth", inline: "center" });
+      });
     },
     undo() {
       self.stage.undoManager.undo();
