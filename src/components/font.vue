@@ -47,7 +47,7 @@
           @change="setFontSize"
           :step="1"
           :min="12"
-          :max="120"
+          :max="9999"
         />
         <a-input-number
           @keydown.stop
@@ -57,7 +57,7 @@
           v-model:value="data.fontSize"
           :step="1"
           :min="12"
-          :max="120"
+          :max="9999"
         />
       </div>
     </div>

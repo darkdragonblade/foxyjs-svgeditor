@@ -104,7 +104,7 @@
         :disabled="!canAlign"
         class="flex-1"
         style="text-align: center"
-        @click="align('vertical-stretch')"
+        @click="align('horizontal-stretch')"
       >
         <svg
           style="margin-top: 2px"
@@ -120,7 +120,7 @@
         :disabled="!canAlign"
         class="flex-1"
         style="text-align: center"
-        @click="align('horizontal-stretch')"
+        @click="align('vertical-stretch')"
       >
         <svg
           style="margin-top: 2px"
@@ -140,7 +140,7 @@
         :disabled="!canFlip"
         class="flex-1"
         style="text-align: center"
-        @click="transform('flipX')"
+        @click="transform('flipY')"
       >
         <svg
           style="margin-top: 2px"
@@ -156,7 +156,7 @@
         :disabled="!canFlip"
         class="flex-1"
         style="text-align: center"
-        @click="transform('flipY')"
+        @click="transform('flipX')"
       >
         <svg
           style="margin-top: 2px"
@@ -351,6 +351,7 @@ export default {
           break;
         default:
       }
+      this.init();
     },
     group(flag = true) {
       if (flag) {
@@ -358,6 +359,7 @@ export default {
       } else {
         self.stage.groupManager.unGroup();
       }
+      this.init();
     },
     order(type) {
       switch (type) {
@@ -374,6 +376,7 @@ export default {
           stage.orderManager.lowerToBack();
           break;
       }
+      this.init();
     },
   },
   mounted() {
