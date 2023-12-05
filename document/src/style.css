@@ -1,0 +1,81 @@
+*{
+  box-sizing: border-box;
+}
+
+@font-face {
+  font-family: 'BRLNSR';
+  src: url('./BRLNSR.TTF');
+}
+
+html,
+body,
+p,
+div,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+ol,
+li,
+ul {
+  margin: 0;
+  padding: 0;
+}
+
+html,body{
+  width:100vw;
+  height:100vh;
+  overflow: hidden;
+  font-size: 14px;
+}
+
+*[disabled="true"]{
+  opacity: 0.5;
+  pointer-events: none;
+  transition: all .25s;
+}
+
+.flex{
+  display: flex;
+}
+
+.flex-1{
+  flex:1;
+}
+
+.flex-align-center{
+  align-items: center;
+}
+
+.flex-justify-center{
+  justify-content: center;
+}
+
+.flex-justify-between{
+  justify-content: space-between;
+}
+
+input,
+button {
+  border: none;
+  outline: none;
+  background: none;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 5px;
+  background-color: #F5F5F5;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: #cccccc;
+  transition: width 0.2s ease-in-out; 
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: #b2b2b2;
+  transform: scale(1.2);
+}

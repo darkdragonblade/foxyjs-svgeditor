@@ -7,7 +7,7 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
+*.node_modules
 dist
 dist-ssr
 src/foxyjs
@@ -23,3 +23,4 @@ src/foxyjs
 *.njsproj
 *.sln
 *.sw?
+node_modules

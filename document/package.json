@@ -1,0 +1,26 @@
+{
+  "name": "vue-foxyjs",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "brace": "^0.11.1",
+    "foxyjs": "^1.2.29",
+    "lil-gui": "^0.19.1",
+    "md-editor-v3": "^4.2.2",
+    "three": "^0.158.0",
+    "vue": "^3.3.4",
+    "vue-i18n": "^9.4.1",
+    "vue-router": "^4.2.5"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^4.2.3",
+    "vite": "^4.4.5",
+    "vite-plugin-md": "^0.22.5"
+  }
+}
