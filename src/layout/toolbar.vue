@@ -6,21 +6,78 @@
         <template #overlay>
           <a-menu>
             <a-menu-item @click="openSvg">
-              <span>Open Svg</span>
+              <div class="flex flex-align-center" style="gap: 6px">
+                <svg width="16" height="16" fill="none" viewBox="0 0 48 48">
+                  <use xlink:href="#Open" />
+                </svg>
+                <span>Open</span>
+              </div>
             </a-menu-item>
             <a-menu-divider />
+            <a-menu-item @click="importImage" disabled>
+              <div class="flex flex-align-center" style="gap: 6px">
+                <svg width="16" height="16" fill="none" viewBox="0 0 48 48">
+                  <use xlink:href="#Import" />
+                </svg>
+                <span>Import Svg</span>
+              </div>
+            </a-menu-item>
             <a-menu-item @click="importImage">
-              <span>Import Image</span>
+              <div class="flex flex-align-center" style="gap: 6px">
+                <svg width="16" height="16" fill="none" viewBox="0 0 48 48">
+                  <use xlink:href="#Import" />
+                </svg>
+                <span>Import Image</span>
+              </div>
             </a-menu-item>
             <a-menu-item @click="importPdf">
-              <span>Import Pdf</span>
+              <div class="flex flex-align-center" style="gap: 6px">
+                <svg width="16" height="16" fill="none" viewBox="0 0 48 48">
+                  <use xlink:href="#Import" />
+                </svg>
+                <span>Import Pdf</span>
+              </div>
+            </a-menu-item>
+            <a-menu-item @click="importPdf" disabled>
+              <div class="flex flex-align-center" style="gap: 6px">
+                <svg width="16" height="16" fill="none" viewBox="0 0 48 48">
+                  <use xlink:href="#Import" />
+                </svg>
+                <span>Import Dxf</span>
+              </div>
             </a-menu-item>
             <a-menu-divider />
             <a-menu-item @click="exportSvg">
-              <span>Export Svg</span>
+              <div class="flex flex-align-center" style="gap: 6px">
+                <svg width="16" height="16" fill="none" viewBox="0 0 48 48">
+                  <use xlink:href="#Export" />
+                </svg>
+                <span>Export Svg</span>
+              </div>
             </a-menu-item>
             <a-menu-item @click="exportImage">
-              <span>Export Image</span>
+              <div class="flex flex-align-center" style="gap: 6px">
+                <svg width="16" height="16" fill="none" viewBox="0 0 48 48">
+                  <use xlink:href="#Export" />
+                </svg>
+                <span>Export Image</span>
+              </div>
+            </a-menu-item>
+            <a-menu-item @click="exportImage" disabled>
+              <div class="flex flex-align-center" style="gap: 6px">
+                <svg width="16" height="16" fill="none" viewBox="0 0 48 48">
+                  <use xlink:href="#Export" />
+                </svg>
+                <span>Export Pdf</span>
+              </div>
+            </a-menu-item>
+            <a-menu-item @click="exportImage" disabled>
+              <div class="flex flex-align-center" style="gap: 6px">
+                <svg width="16" height="16" fill="none" viewBox="0 0 48 48">
+                  <use xlink:href="#Export" />
+                </svg>
+                <span>Export Dxf</span>
+              </div>
             </a-menu-item>
           </a-menu>
         </template>
@@ -30,24 +87,60 @@
         <template #overlay>
           <a-menu>
             <a-menu-item @click="undo" :disabled="!canUndo">
-              <span>Undo</span>
+              <div
+                class="flex flex-align-center flex-justify-between"
+                style="gap: 60px"
+              >
+                <span>Undo</span>
+                <span>CTRL + Z</span>
+              </div>
             </a-menu-item>
             <a-menu-item @click="redo" :disabled="!canRedo">
-              <span>Redo</span>
+              <div
+                class="flex flex-align-center flex-justify-between"
+                style="gap: 60px"
+              >
+                <span>Redo</span>
+                <span>CTRL + SHIFT + Z</span>
+              </div>
             </a-menu-item>
             <a-menu-divider />
             <a-menu-item @click="cut">
-              <span>Cut</span>
+              <div
+                class="flex flex-align-center flex-justify-between"
+                style="gap: 60px"
+              >
+                <span>Cut</span>
+                <span>CTRL + X</span>
+              </div>
             </a-menu-item>
             <a-menu-item @click="copy">
-              <span>Copy</span>
+              <div
+                class="flex flex-align-center flex-justify-between"
+                style="gap: 60px"
+              >
+                <span>Copy</span>
+                <span>CTRL + C</span>
+              </div>
             </a-menu-item>
             <a-menu-item @click="paste">
-              <span>Paste</span>
+              <div
+                class="flex flex-align-center flex-justify-between"
+                style="gap: 60px"
+              >
+                <span>Paste</span>
+                <span>CTRL + V</span>
+              </div>
             </a-menu-item>
             <a-menu-divider />
             <a-menu-item @click="remove">
-              <span>Delete</span>
+              <div
+                class="flex flex-align-center flex-justify-between"
+                style="gap: 60px"
+              >
+                <span>Delete</span>
+                <span>DELETE</span>
+              </div>
             </a-menu-item>
           </a-menu>
         </template>
@@ -59,9 +152,9 @@
             <a-menu-item @click="toggleManualGuides">
               <div class="flex flex-align-center" style="gap: 6px">
                 <svg
-                  v-show="manualGuides"
-                  width="17.5"
-                  height="17.5"
+                  :style="{ color: manualGuides ? '#000000' : '#cccccc' }"
+                  width="16"
+                  height="16"
                   fill="none"
                   viewBox="0 0 48 48"
                 >
@@ -73,9 +166,9 @@
             <a-menu-item @click="toggleGrid">
               <div class="flex flex-align-center" style="gap: 6px">
                 <svg
-                  v-show="showGrid"
-                  width="17.5"
-                  height="17.5"
+                  :style="{ color: showGrid ? '#000000' : '#cccccc' }"
+                  width="16"
+                  height="16"
                   fill="none"
                   viewBox="0 0 48 48"
                 >
@@ -87,9 +180,9 @@
             <a-menu-item @click="toggleSmartGuides">
               <div class="flex flex-align-center" style="gap: 6px">
                 <svg
-                  v-show="smartGuides"
-                  width="17.5"
-                  height="17.5"
+                  :style="{ color: smartGuides ? '#000000' : '#cccccc' }"
+                  width="16"
+                  height="16"
                   fill="none"
                   viewBox="0 0 48 48"
                 >
@@ -102,9 +195,9 @@
             <a-menu-item @click="toggleRulers">
               <div class="flex flex-align-center" style="gap: 6px">
                 <svg
-                  v-show="rulers"
-                  width="17.5"
-                  height="17.5"
+                  :style="{ color: rulers ? '#000000' : '#cccccc' }"
+                  width="16"
+                  height="16"
                   fill="none"
                   viewBox="0 0 48 48"
                 >
@@ -116,9 +209,9 @@
             <a-menu-item @click="toggleTransparency">
               <div class="flex flex-align-center" style="gap: 6px">
                 <svg
-                  v-show="transparency"
-                  width="17.5"
-                  height="17.5"
+                  :style="{ color: transparency ? '#000000' : '#cccccc' }"
+                  width="16"
+                  height="16"
                   fill="none"
                   viewBox="0 0 48 48"
                 >
@@ -165,7 +258,7 @@
           </div>
         </template>
         <div class="menu-item">
-          <svg width="17.5" height="17.5" fill="none" viewBox="0 0 48 48">
+          <svg width="16" height="16" fill="none" viewBox="0 0 48 48">
             <use xlink:href="#Setting" />
           </svg>
         </div>

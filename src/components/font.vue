@@ -1,7 +1,7 @@
 <template>
   <div class="flex" style="flex-direction: column; gap: 10px">
     <div>
-      <div style="margin-bottom: 6px"><b>Family</b></div>
+      <div style="margin-bottom: 8px"><b>Family</b></div>
       <a-select
         :disabled="data.disFontFamily"
         ref="select"
@@ -18,27 +18,34 @@
       </a-select>
     </div>
     <div>
-      <div style="margin-bottom: 6px"><b>Face</b></div>
+      <div style="margin-bottom: 8px"><b>Face</b></div>
       <div class="flex flex-align-center" style="gap: 6px">
         <a-button
-          style="width: 50%; text-align: center"
+          class="flex flex-align-center flex-justify-center"
+          style="width: 50%"
           :disabled="data.disBold"
           :type="data.isBold ? 'primary' : 'dashed'"
           @click="bold"
-          >Bold</a-button
-        >
+          ><svg width="16" height="16" fill="none" viewBox="0 0 48 48">
+            <use xlink:href="#Text Bold" />
+          </svg>
+        </a-button>
         <a-button
-          style="width: 50%; text-align: center"
+          class="flex flex-align-center flex-justify-center"
+          style="width: 50%"
           :disabled="data.disItalic"
           :type="data.isItalic ? 'primary' : 'dashed'"
           @click="italic"
-          >Italic</a-button
         >
+          <svg width="16" height="16" fill="none" viewBox="0 0 48 48">
+            <use xlink:href="#Text Italic" />
+          </svg>
+        </a-button>
       </div>
     </div>
 
     <div>
-      <div style="margin-bottom: 6px"><b>Size</b></div>
+      <div style="margin-bottom: 8px"><b>Size</b></div>
       <div class="flex flex-align-center" style="gap: 10px">
         <a-slider
           :disabled="data.disFontSize"
@@ -47,7 +54,7 @@
           @change="setFontSize"
           :step="1"
           :min="12"
-          :max="9999"
+          :max="999"
         />
         <a-input-number
           @keydown.stop
@@ -57,13 +64,13 @@
           v-model:value="data.fontSize"
           :step="1"
           :min="12"
-          :max="9999"
+          :max="999"
         />
       </div>
     </div>
 
     <div>
-      <div style="margin-bottom: 6px"><b>Decoration</b></div>
+      <div style="margin-bottom: 8px"><b>Decoration</b></div>
       <div class="flex flex-align-center" style="gap: 6px">
         <a-button
           :disabled="data.disUnderline"
@@ -91,33 +98,42 @@
     </div>
 
     <div>
-      <div style="margin-bottom: 6px"><b>Anchor</b></div>
+      <div style="margin-bottom: 8px"><b>Anchor</b></div>
       <div class="flex flex-align-center" style="gap: 6px">
         <a-button
+          class="flex flex-align-center flex-justify-center"
           :disabled="data.disAnchor"
-          style="width: 33.33%; text-align: center"
+          style="width: 33.33%"
           :type="data.anchor === 'start' ? 'primary' : 'dashed'"
           @click="anchor('start')"
-          >Start</a-button
-        >
+          ><svg width="16" height="16" fill="none" viewBox="0 0 48 48">
+            <use xlink:href="#Text Align Left" />
+          </svg>
+        </a-button>
         <a-button
+          class="flex flex-align-center flex-justify-center"
           :disabled="data.disAnchor"
-          style="width: 33.33%; text-align: center"
+          style="width: 33.33%"
           :type="data.anchor === 'middle' ? 'primary' : 'dashed'"
           @click="anchor('middle')"
-          >Middle</a-button
-        >
+          ><svg width="16" height="16" fill="none" viewBox="0 0 48 48">
+            <use xlink:href="#Text Align Center" />
+          </svg>
+        </a-button>
         <a-button
           :disabled="data.disAnchor"
-          style="width: 33.33%; text-align: center"
+          class="flex flex-align-center flex-justify-center"
+          style="width: 33.33%"
           :type="data.anchor === 'end' ? 'primary' : 'dashed'"
           @click="anchor('end')"
-          >End</a-button
-        >
+          ><svg width="16" height="16" fill="none" viewBox="0 0 48 48">
+            <use xlink:href="#Text Align Right" />
+          </svg>
+        </a-button>
       </div>
     </div>
     <div>
-      <div style="margin-bottom: 6px"><b>Letter</b></div>
+      <div style="margin-bottom: 8px"><b>Letter</b></div>
       <a-slider
         :min="-20"
         :max="20"
@@ -128,7 +144,7 @@
       />
     </div>
     <div>
-      <div style="margin-bottom: 6px"><b>Word</b></div>
+      <div style="margin-bottom: 8px"><b>Word</b></div>
       <a-slider
         :min="-100"
         :max="100"
@@ -139,7 +155,7 @@
       />
     </div>
     <div>
-      <div style="margin-bottom: 6px"><b>Line</b></div>
+      <div style="margin-bottom: 8px"><b>Line</b></div>
       <a-slider
         :min="-3"
         :max="3"

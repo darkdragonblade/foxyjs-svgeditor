@@ -79,7 +79,7 @@ export default {
         { text: "Ellipse", type: "ellipse-tool" },
         { text: "Triangle", type: "triangle-tool" },
         { text: "Polygon", type: "n-gon-tool" },
-        { text: "Path-tool", type: "path-tool" },
+        { text: "Path Tool", type: "path-tool" },
         { text: "Freehand", type: "freehand-tool" },
         { text: "Pen", type: "pen-tool" },
         { text: "Text", type: "text-tool" },
