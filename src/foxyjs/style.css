@@ -1,0 +1,563 @@
+:root {
+    --fx-color-primary: #1677ff;
+    --fx-hover-stroke: #f55c36;
+    --fx-hover-stroke-width: 2;
+    --fx-paint-fill: rgb(216, 216, 216);
+    --fx-paint-stroke: #000000;
+    --fx-paint-stroke-width: 1;
+    --fx-text-fill: #333333;
+    --fx-text-content: Hello Foxy.js;
+    --fx-text-font-family: Arial;
+    --fx-text-font-size: 28px;
+    --fx-caret-line-stroke: var(--fx-color-primary);
+    --fx-caret-line-stroke-width: 3;
+    --fx-text-selection-fill: var(--fx-color-primary);
+    --fx-text-selection-fill-opacity: 0.25;
+    --fx-manual-guides-color: var(--fx-color-primary);
+    --fx-manual-guides-active-color: red;
+    --fx-grid-color: #333333;
+    --fx-smart-guides-color: var(--fx-color-primary);
+    --fx-scale-grippies-fill: var(--fx-color-primary);
+    --fx-scale-grippies-stroke: white;
+    --fx-scale-grippies-stroke-width: 2;
+    --fx-scale-grippies-size: 12;
+    --fx-scale-grippies-rx: 0;
+    --fx-rotate-grippies-fill: #fa2792;
+    --fx-rotate-grippies-stroke: white;
+    --fx-rotate-grippies-stroke-width: 2;
+    --fx-rotate-grippies-size: 12;
+    --fx-rotate-grippies-rx: 999;
+    --fx-skew-grippies-fill: #ff7a00;
+    --fx-skew-grippies-stroke: white;
+    --fx-skew-grippies-stroke-width: 2;
+    --fx-skew-grippies-size: 12;
+    --fx-skew-grippies-rx: 0;
+    --fx-rubberband-fill: var(--fx-color-primary);
+    --fx-rubberband-fill-opacity: 0.2;
+    --fx-rubberband-stroke: var(--fx-color-primary);
+    --fx-rubberband-stroke-opacity: 0.75;
+    --fx-rubberband-stroke-width: 1;
+    --fx-view-fill: white;
+    --fx-view-stroke: #d1d1d1;
+    --fx-canvas-background: #f0f0f0;
+    /* --fx-board-background: linear-gradient(45deg, #d6d6d6 25%, #0000 25%) 0px 0px/10px 10px, linear-gradient(-45deg, #d6d6d6 25%, #0000 25%) 0px 5px/10px 10px, linear-gradient(45deg, #0000 75%, #d6d6d6 75%) 5px -5px/10px 10px, linear-gradient(-45deg, #0000 75%, #d6d6d6 75%) -5px 0px/10px 10px, white; */
+    --fx-crosshair-border-color: #0663E5;
+}
+
+/** stage **/
+
+svg[foxyjs] {
+    display: block;
+}
+
+[uid="canvas"]>#background-rect {
+    fill: var(--fx-canvas-background);
+    pointer-events: none;
+}
+
+[uid="canvas"][transparent] > #background-rect {
+    fill: rgba(0, 0, 0, 0);
+}
+
+#background-outlines rect {
+    fill: var(--fx-view-fill);
+    stroke: var(--fx-view-stroke);
+    vector-effect: non-scaling-stroke;
+}
+
+[uid="canvas"][transparent] > #background-outlines rect{
+    fill: none;
+    stroke: rgba(0, 0, 0, 0.3);
+}
+
+#workspaces>#whitespace {
+    opacity: 0;
+}
+
+[uid="foxy-workspace"] [disabled] {
+    opacity: 0.34;
+}
+
+#huds>* {
+    display: none;
+}
+
+#huds>[enabled],
+#huds>[drawing] {
+    display: initial;
+}
+
+/** transform hud **/
+
+#transform-hud [uid="scale-grippies"]>.grippie {
+    fill: var(--fx-scale-grippies-fill);
+    stroke: var(--fx-scale-grippies-stroke);
+    stroke-width: var(--fx-scale-grippies-stroke-width);
+    rx: var(--fx-scale-grippies-rx);
+    vector-effect: non-scaling-stroke;
+    filter: drop-shadow(0 0 1px black);
+}
+
+#transform-hud [uid="rotate-grippies"]>.grippie {
+    fill: var(--fx-rotate-grippies-fill);
+    stroke: var(--fx-rotate-grippies-stroke);
+    stroke-width: var(--fx-rotate-grippies-stroke-width);
+    rx: var(--fx-rotate-grippies-rx);
+    vector-effect: non-scaling-stroke;
+    filter: drop-shadow(0 0 1px black);
+}
+
+#transform-hud [uid="skew-grippies"]>.grippie {
+    fill: var(--fx-skew-grippies-fill);
+    stroke: var(--fx-skew-grippies-stroke);
+    stroke-width: var(--fx-skew-grippies-stroke-width);
+    rx: var(--fx-skew-grippies-rx);
+    vector-effect: non-scaling-stroke;
+    filter: drop-shadow(0 0 1px black);
+}
+
+/** rubberband hud **/
+
+#rubber-band-hud [uid="rubber-band"] {
+    fill: var(--fx-rubberband-fill);
+    fill-opacity: var(--fx-rubberband-fill-opacity);
+    stroke: var(--fx-rubberband-stroke);
+    stroke-opacity: var(--fx-rubberband-stroke-opacity);
+    stroke-width: var(--fx-rubberband-stroke-width);
+    pointer-events: none;
+    vector-effect: non-scaling-stroke;
+}
+
+/** text hud **/
+
+#text-hud [uid="caret-line"] {
+    stroke-width: var(--fx-caret-line-stroke-width);
+    vector-effect: non-scaling-stroke;
+    pointer-events: none;
+    stroke: gray;
+}
+
+#text-hud[inputmode] [uid="caret-line"] {
+    stroke: var(--fx-caret-line-stroke);
+}
+
+#text-hud [uid="selection-rects"] rect {
+    fill: rgba(179, 179, 179, 0.3);
+    pointer-events: none;
+}
+
+#text-hud[inputmode] [uid="selection-rects"] rect {
+    fill: var(--fx-text-selection-fill);
+    fill-opacity: var(--fx-text-selection-fill-opacity);
+}
+
+#text-hud [uid="html-input-object"] {
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    background: white;
+    pointer-events: none;
+}
+
+#text-hud[debug] [uid="html-input-object"] {
+    width: 150px;
+    height: 50px;
+    opacity: 1;
+    pointer-events: all;
+}
+
+#text-hud [uid="html-input-object"] * {
+    font-size: 0.01px !important;
+}
+
+#text-hud[debug] [uid="html-input-object"] * {
+    font-size: 10px !important;
+}
+
+#text-hud [uid="html-input"] {
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    margin: 0;
+    white-space: pre;
+}
+
+#text-hud[inputmode] [uid="html-input"] {
+    -webkit-user-modify: read-write-plaintext-only;
+    -webkit-user-select: text;
+}
+
+#text-hud [uid="html-input"] *:not(span):not(a) {
+    display: none;
+}
+
+/** spline hud **/
+
+#spline-hud [uid="grippies"] {
+    cursor: default;
+}
+
+#spline-hud [uid="grippies"]:focus {
+    outline: none;
+}
+
+#spline-hud .primary-node-grippie .outer-circle {
+    fill: white;
+    stroke: #4d2782;
+    stroke-width: 2;
+    vector-effect: non-scaling-stroke;
+}
+
+#spline-hud .primary-node-grippie[data-selected] .outer-circle {
+    fill: #bc9aec;
+}
+
+#spline-hud #grippies:focus .primary-node-grippie[data-selected] .outer-circle {
+    fill: #a370ea;
+}
+
+#spline-hud[mode^="draw-"] .primary-node-grippie[data-position="mid"],
+#spline-hud[mode$="-basis"] .primary-node-grippie:not([data-subpath-type="basis"]),
+#spline-hud[mode$="-rom"] .primary-node-grippie:not([data-subpath-type="rom"]),
+#spline-hud[mode$="-levien"] .primary-node-grippie:not([data-subpath-type="levien"]) {
+    display: none;
+}
+
+#spline-hud .primary-node-grippie .inner-circle {
+    pointer-events: none;
+    fill: #4d2782;
+}
+
+#spline-hud .secondary-node-grippie {
+    fill: white;
+    stroke: #ef6c6c;
+    stroke-width: 1.5;
+    vector-effect: non-scaling-stroke;
+}
+
+#spline-hud[mode^="draw-"] .secondary-node-grippie,
+#spline-hud[mode$="-basis"] .secondary-node-grippie:not([data-subpath-type="basis"]),
+#spline-hud[mode$="-rom"] .secondary-node-grippie:not([data-subpath-type="rom"]),
+#spline-hud[mode$="-levien"] .secondary-node-grippie:not([data-subpath-type="levien"]) {
+    display: none;
+}
+
+#spline-hud .helper-line {
+    fill: none;
+    stroke: red;
+    stroke-width: 2;
+    vector-effect: non-scaling-stroke;
+    pointer-events: none;
+    opacity: 0.3;
+}
+
+#spline-hud[mode^="draw-freehand"] .helper-line,
+#spline-hud[mode$="-rom"] .helper-line {
+    display: none;
+}
+
+#spline-hud[mode^="draw"] .curve-grippie {
+    display: none;
+}
+
+#spline-hud .curve-grippie path {
+    fill: none;
+    stroke: #9141ac;
+    stroke-width: 10px;
+    vector-effect: non-scaling-stroke;
+    opacity: 0;
+}
+
+#spline-hud .curve-grippie path:hover {
+    opacity: 0.2;
+}
+
+/** line hud **/
+
+#line-hud [uid="outline"] {
+    fill: none;
+    stroke: red;
+    stroke-width: 2.5;
+    vector-effect: non-scaling-stroke;
+    pointer-events: none;
+}
+
+
+/** vektor hud **/
+
+#vektor-hud {
+    pointer-events: none;
+}
+
+#vektor-hud [uid="dashed"] {
+    stroke-width: 1;
+    stroke: #000000;
+    stroke-dasharray: 2;
+    vector-effect: non-scaling-stroke;
+}
+
+#vektor-hud [uid="arrow"] path {
+    stroke-width: 1;
+    stroke: red;
+    vector-effect: non-scaling-stroke;
+}
+
+#vektor-hud [uid="text"] {}
+
+/** cubic bezier seg hud **/
+
+#cubic-bezier-seg-hud [uid="control-line-1"],
+#cubic-bezier-seg-hud [uid="control-line-2"] {
+    fill: none;
+    stroke: red;
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+    pointer-events: none;
+    opacity: 0.4;
+}
+
+#cubic-bezier-seg-hud [uid="control-point-1-grippie"],
+#cubic-bezier-seg-hud [uid="control-point-2-grippie"] {
+    fill: red;
+    stroke: none;
+    pointer-events: none;
+    opacity: 1;
+}
+
+#cubic-bezier-seg-hud [uid="outline"] {
+    fill: none;
+    stroke: red;
+    stroke-width: 2.5;
+    vector-effect: non-scaling-stroke;
+    pointer-events: none;
+}
+
+/** smart guides **/
+
+#smart-guides-hud .repr {
+    fill: none;
+    stroke: var(--fx-smart-guides-color);
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+/** crosshair **/
+
+#crosshair{
+    display: none;
+    position: fixed;
+    top: 0px;
+    left: 0px;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    contain: strict;
+    font-size: 14px;
+    user-select: none;
+}
+
+#horizontal-crosshair{
+    height:1px;
+    width:100%;
+    position: absolute;
+    border-top:1px dashed var(--fx-crosshair-border-color);
+    border-bottom: 0;
+}
+
+#vertical-crosshair{
+    width:1px;
+    height:100%;
+    position: absolute;
+    border-left:1px dashed var(--fx-crosshair-border-color);
+    border-right: 0;
+}
+
+/** rulers **/
+#rulers {
+    display: none;
+    position: absolute;
+    top: 0px;
+    left: 0px;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    contain: strict;
+    font-size: 14px;
+    user-select: none;
+}
+
+#rulers-main {
+    position: relative;
+    width: 100%;
+    height: 100%;
+}
+
+#corner-ruler {
+    pointer-events: all;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 14px;
+    height: 14px;
+    box-sizing: border-box;
+    border-width: 0 1px 1px 0;
+    border-style: none solid solid none;
+}
+
+#horizontal-ruler,
+#vertical-ruler {
+    pointer-events: all;
+    position: relative;
+    box-sizing: border-box;
+    touch-action: pinch-zoom;
+}
+
+#horizontal-ruler {
+    position: absolute;
+    top: 0;
+    width: 100%;
+    height: 14px;
+    border-width: 0 0 1px 0;
+    border-style: none none solid none;
+    background: white;
+    border-color: #dcdcdc;
+}
+
+#vertical-ruler {
+    position: absolute;
+    top: 0;
+    width: 14px;
+    height: 100%;
+    border-width: 0 1px 0 0;
+    border-style: none solid none none;
+    writing-mode: vertical-lr;
+    background: white;
+    border-color: #dcdcdc;
+}
+
+#horizontal-ruler>div,
+#vertical-ruler>div {
+    position: absolute;
+    font-size: 9px;
+    box-sizing: border-box;
+    pointer-events: none;
+    user-select: none;
+    white-space: pre;
+}
+
+#horizontal-ruler>div {
+    width: 0px;
+    height: 100%;
+    top: 0;
+    left: 0;
+    padding: 0 0 0 3px;
+    border-width: 0 0 0 1px;
+    border-style: none none none solid;
+}
+
+#vertical-ruler>div {
+    width: 100%;
+    height: 0px;
+    top: 0;
+    left: 0;
+    padding: 3px 0 0 0;
+    border-width: 1px 0 0 0;
+    border-style: solid none none none;
+}
+
+#rulers [part="tick"] {
+    color: rgba(0, 0, 0, 0.8);
+    border-color: rgba(0, 0, 0, 0.4);
+}
+
+/** grid hud **/
+
+#grid-hud .line {
+    fill: none;
+    stroke: var(--fx-grid-color);
+    stroke-width: 1px;
+    stroke-opacity: 0.2;
+    vector-effect: non-scaling-stroke;
+    pointer-events: none;
+}
+
+#grid-hud .grippie {
+    stroke: var(--fx-grid-color);
+    stroke-width: 1px;
+    fill: white;
+    pointer-events: all;
+    vector-effect: non-scaling-stroke;
+}
+
+#grid-hud[selected] .grippie {
+    fill: var(--fx-grid-color);
+}
+
+#grid-hud [uid="cell-rect"] {
+    display: none;
+    fill: var(--fx-grid-color);
+    fill-opacity: 0.05;
+    stroke: var(--fx-grid-color);
+    stroke-width: 1px;
+    stroke-opacity: 1;
+    vector-effect: non-scaling-stroke;
+}
+
+#grid-hud[selected] [uid="cell-rect"] {
+    display: initial;
+}
+
+/** hover **/
+
+#outline-hud [uid="outline"] {
+    fill: none;
+    stroke: var(--fx-hover-stroke);
+    stroke-width: var(--fx-hover-stroke-width);
+    pointer-events: none;
+    vector-effect: non-scaling-stroke;
+}
+
+/** manual guides **/
+
+#manual-guides-hud .repr {
+    color: var(--fx-manual-guides-color);
+    pointer-events: none;
+}
+
+#manual-guides-hud .repr[data-snapping="true"] {
+    color: var(--fx-manual-guides-active-color);
+}
+
+#manual-guides-hud .repr .outer-line {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 10;
+    vector-effect: non-scaling-stroke;
+    opacity: 0;
+}
+
+#manual-guides-hud .repr[data-selected] .outer-line {
+    opacity: 0.1;
+    pointer-events: all;
+}
+
+#manual-guides-hud .repr .inner-line {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+}
+
+#manual-guides-hud .repr .grippie {
+    stroke: currentColor;
+    stroke-width: 1px;
+    fill: white;
+    pointer-events: all;
+    vector-effect: non-scaling-stroke;
+}
+
+#manual-guides-hud .repr[data-selected] .grippie {
+    fill: currentColor;
+}

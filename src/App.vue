@@ -34,11 +34,6 @@ export default {
         smartGuides: true,
         showGrid: true,
         showRulers: true,
-        crosshair: true,
-      });
-
-      stage.board.addEventListener("elementupdated", ($event) => {
-        console.log($event.detail);
       });
     },
   },
