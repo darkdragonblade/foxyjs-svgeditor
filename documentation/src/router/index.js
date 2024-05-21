@@ -34,6 +34,24 @@ const staticRouters = [
     ],
   },
   {
+    path: '/stage',
+    name: 'stage',
+    meta: {
+      title: 'message.stage',
+    },
+    redirect: '/stage/transform',
+    children: [
+      {
+        path: '/shapes/star',
+        name: 'stage',
+        component: () => import('@/views/shapes/star.vue'),
+        meta: {
+          title: 'message.stageToggleTool',
+        },
+      },
+    ],
+  },
+  {
     path: '/shapes',
     name: 'shapes',
     meta: {
@@ -214,7 +232,7 @@ const staticRouters = [
     redirect: '/history',
     meta: {
       title: 'message.methods',
-      children:[
+      children: [
         {
           path: '/history',
           name: 'history',

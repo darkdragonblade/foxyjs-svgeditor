@@ -1,19 +1,19 @@
 import { createI18n } from 'vue-i18n'
 
-// 定义你的语言环境信息
 const messages = {
   en: {
     message: {
-      pageTitle:'SVG Editor',
-      start:'Start',
+      pageTitle: 'SVG Editor',
+      start: 'Start',
       demo: 'Demo',
       install: 'Install',
       theme: 'Theme',
+      stage: "Stage",
       star: 'Star',
       guide: 'Guide',
       shapes: 'Shapes',
       star: 'Star',
-      tools: 'tools',
+      tools: 'Tools',
       transformTool: 'Transform',
       panTool: 'Pan',
       rectTool: 'Rect',
@@ -46,16 +46,18 @@ const messages = {
       text: 'Text',
       shape: 'Shape',
       style: 'Style',
+      stageToggleTool: 'Stage.toggleTool'
     },
   },
   zh: {
     message: {
-      pageTitle:'SVG 编辑器',
-      start:'开始',
+      pageTitle: 'SVG 编辑器',
+      start: '开始',
       demo: '例子',
       install: '安装',
       theme: '主题',
       star: '评价',
+      stage: "舞台",
       guide: '指导',
       shapes: '形状',
       star: '星星',
@@ -92,11 +94,11 @@ const messages = {
       text: '文本属性',
       shape: '形状',
       style: '样式',
+      stageToggleTool: 'Stage.toggleTool'
     },
   },
 }
 
-// 创建i18n实例并传入语言环境信息
 const i18n = createI18n({
   legacy: false,
   locale: 'en',

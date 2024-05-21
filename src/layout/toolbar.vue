@@ -191,6 +191,20 @@
                 <span>Smart Guides</span>
               </div>
             </a-menu-item>
+            <a-menu-item @click="toggleCrosshair">
+              <div class="flex flex-align-center" style="gap: 6px">
+                <svg
+                  :style="{ color: crosshair ? '#000000' : '#cccccc' }"
+                  width="16"
+                  height="16"
+                  fill="none"
+                  viewBox="0 0 48 48"
+                >
+                  <use xlink:href="#Check" />
+                </svg>
+                <span>Crosshair</span>
+              </div>
+            </a-menu-item>
             <a-menu-divider />
             <a-menu-item @click="toggleRulers">
               <div class="flex flex-align-center" style="gap: 6px">
@@ -286,6 +300,7 @@ export default {
       manualGuides: false,
       showGrid: false,
       smartGuides: false,
+      crosshair: false,
       rulers: false,
       transparency: false,
       colorPrimary: "",
@@ -296,35 +311,43 @@ export default {
       this.manualGuides = self.stage.manualManager.enabled;
       this.showGrid = self.stage.gridManager.enabled;
       this.smartGuides = self.stage.smartManager.enabled;
+      this.crosshair = self.stage.crosshairManager.enabled;
       this.rulers = self.stage.rulerManager.enabled;
       this.transparency = self.stage.viewTool.transparency;
     },
     toggleManualGuides() {
       if (self.stage.manualManager.enabled) {
-        self.stage.manualManager.disabledCallback();
+        self.stage.manualManager.disable();
       } else {
-        self.stage.manualManager.enabledCallback();
+        self.stage.manualManager.enable();
       }
     },
     toggleGrid() {
       if (self.stage.gridManager.enabled) {
-        self.stage.gridManager.disabledCallback();
+        self.stage.gridManager.disable();
       } else {
-        self.stage.gridManager.enabledCallback();
+        self.stage.gridManager.enable();
       }
     },
     toggleSmartGuides() {
       if (self.stage.smartManager.enabled) {
-        self.stage.smartManager.disabledCallback();
+        self.stage.smartManager.disable();
       } else {
-        self.stage.smartManager.enabledCallback();
+        self.stage.smartManager.enable();
+      }
+    },
+    toggleCrosshair() {
+      if (self.stage.crosshairManager.enabled) {
+        self.stage.crosshairManager.disable();
+      } else {
+        self.stage.crosshairManager.enable();
       }
     },
     toggleRulers() {
       if (self.stage.rulerManager.enabled) {
-        self.stage.rulerManager.disabledCallback();
+        self.stage.rulerManager.disable();
       } else {
-        self.stage.rulerManager.enabledCallback();
+        self.stage.rulerManager.enable();
       }
     },
     async openSvg() {
@@ -490,6 +513,8 @@ export default {
   min-height: 36px;
   padding: 6px;
   width: 100%;
+  position: relative;
+  z-index: 99;
 }
 
 .toolbar .menu-item {

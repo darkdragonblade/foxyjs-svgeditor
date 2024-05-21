@@ -30,6 +30,6 @@ import Slider from "./side.vue";
 .workspace {
   height: 100%;
   width: 100%;
-  overflow: hidden;
+  overflow: auto;
 }
 </style>
