@@ -87,7 +87,7 @@ import ElementsGeometryManager from "./support/elementsGeometryManager";
 import ImportManager from "./support/importManager";
 import ExportManager from "./support/exportManager";
 class Stage {
-    version = "1.2.38";
+    version = "1.2.41";
     #scale = 1;
     #geometryPrecision = 3;
     get geometryPrecision() {
@@ -190,6 +190,10 @@ class Stage {
     #canvas;
     get canvas() {
         return this.#canvas;
+    }
+    #htmlPlugins
+    get htmlPlugins() {
+        return this.#htmlPlugins;
     }
     #currentWorkspace;
     get currentWorkspace() {
@@ -413,6 +417,7 @@ class Stage {
         this.#workspaces = document.querySelector("#workspaces");
         this.#currentWorkspace = document.querySelector('[uid="foxy-workspace"]');
         this.#canvas = document.querySelector('[uid="canvas"]');
+        this.#htmlPlugins = document.querySelector('[uid="htmlPlugins"]');
         this.#defs = this.svg.querySelector("defs");
         this.#currentContainer = this.currentWorkspace;
         this.#clipboardManager = new ClipboardManager(this);

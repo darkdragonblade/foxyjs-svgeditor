@@ -45,6 +45,7 @@ class TransformTool {
   ["#skew-grippies"];
   ["#origin-grippie"];
   #grippies;
+  canEdit = true;
   Os = false;
   Ls = false;
   Es;

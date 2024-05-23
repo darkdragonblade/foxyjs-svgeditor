@@ -228,11 +228,12 @@ class TransformSelect {
         if (t.button > 0 || this.#ge) return;
         let s = this.#stage.board.querySelector("#transform-hud");
         let l = this.#stage.getHitWorkspaceElements(t.clientX, t.clientY);
-
         if (l.length > 0) {
             let s = l[l.length - 1];
-            if (this.#stage.pointerClickCount % 2 === 1)
-                this.#stage.isSelectableElement(s) && this.#ve(s);
+            if (this.#stage.pointerClickCount % 2 === 1) {
+
+                this.#stage.transformTool.canEdit && this.#stage.isSelectableElement(s) && this.#ve(s);
+            }
             else {
                 if (this.#stage.pointerClickCount % 2 === 0) {
                     const i = this.#ze(s);

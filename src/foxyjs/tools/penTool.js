@@ -134,7 +134,6 @@ class PenTool {
                 if (null === g) {
                     m(t);
                     S();
-                    alert(1);
                 }
             })
         );

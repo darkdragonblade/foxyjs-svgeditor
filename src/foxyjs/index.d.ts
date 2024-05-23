@@ -68,6 +68,7 @@ declare class Stage {
     selectedElements: any;
     svg: HTMLElement | Element;
     canvas: HTMLElement | Element;
+    htmlPlugins: HTMLElement | Element;
     currentWorkspace: HTMLElement | Element;
     defs: HTMLElement | Element;
     shiftKey: boolean;

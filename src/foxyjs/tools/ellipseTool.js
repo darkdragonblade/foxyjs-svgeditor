@@ -4,7 +4,6 @@ class EllipseTool {
     #disabled = false;
     #pointerdown;
     #stage;
-    canStacking = true;
     constructor(stage) {
         this.#stage = stage;
     }
@@ -13,8 +12,6 @@ class EllipseTool {
         this.#stage.workspaces.addEventListener(
             "pointerdown",
             (this.#pointerdown = (event) => {
-                // if (!this.canStacking && this.#stage.currentContainer.contains(event.target)) return;
-                if (!this.canStacking && this.#stage.selectedElements.has(event.target)) return;
                 this.#paint(event);
             })
         );
