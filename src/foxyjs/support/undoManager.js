@@ -109,16 +109,6 @@ class UndoManager {
                 })
             );
             this.#stage.board.dispatchEvent(
-                new CustomEvent("redo", {
-                    detail: {
-                        label: i,
-                        addedNodes: s,
-                        removedNodes: a,
-                        modifiedNodes: r,
-                    },
-                })
-            );
-            this.#stage.board.dispatchEvent(
                 new CustomEvent("undochange", { detail: "decrement" })
             );
         } else console.info("Can't undo");
@@ -168,16 +158,6 @@ class UndoManager {
                     }
                 }
             this.disabled = !1;
-            this.#stage.board.dispatchEvent(
-                new CustomEvent("redo", {
-                    detail: {
-                        label: i,
-                        addedNodes: s,
-                        removedNodes: a,
-                        modifiedNodes: r,
-                    },
-                })
-            );
             this.#stage.board.dispatchEvent(
                 new CustomEvent("redo", {
                     detail: {

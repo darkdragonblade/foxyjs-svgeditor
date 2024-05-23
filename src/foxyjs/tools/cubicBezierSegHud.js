@@ -88,7 +88,7 @@ class CubicBezierSegHud {
     this["#control-line-2"] = this.hud.querySelector('[uid="control-line-2"]');
   }
   show = (t, e, n = "end", i = null) => {
-    this.activePath = e;
+    this.#activePath = t;
     this.hud.hasAttribute("drawing") && this.hide();
     this.hud.setAttribute("drawing", "");
     this.#stage.snapManager.snapStart(!0);

@@ -4,7 +4,7 @@ class RectTool {
     #pointerdown;
     #disabled = false;
     #stage;
-
+    canStacking = true;
     constructor(stage) {
         this.#stage = stage;
     }
@@ -13,8 +13,10 @@ class RectTool {
         this.#stage.board.style.cursor = "crosshair";
         this.#stage.workspaces.addEventListener(
             "pointerdown",
-            (this.#pointerdown = (t) => {
-                this.#paint(t);
+            (this.#pointerdown = (event) => {
+                // if (!this.canStacking && this.#stage.currentContainer.contains(event.target)) return;
+                if (!this.canStacking && this.#stage.selectedElements.has(event.target)) return;
+                this.#paint(event);
             })
         );
     };

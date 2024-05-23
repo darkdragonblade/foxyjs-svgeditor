@@ -14,7 +14,7 @@ import Toolbar from "./layout/toolbar.vue";
 import Left from "./layout/left.vue";
 import Right from "./layout/right.vue";
 import { Stage } from "./foxyjs";
-import "./foxyjs/style.css";
+import "foxyjs/style.css";
 
 export default {
   components: {
@@ -34,6 +34,7 @@ export default {
         smartGuides: true,
         showGrid: true,
         showRulers: true,
+        crosshair: true,
       });
     },
   },

@@ -56,6 +56,7 @@ const stage = new Stage(container, {
   smartGuides: true,
   showGrid: true,
   showRulers: true,
+  crosshair: true,
 });
 const star = new SVGStar({
   x: 100,
