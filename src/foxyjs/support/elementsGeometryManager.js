@@ -19,21 +19,20 @@ import {
 } from "../utils/common";
 class ElementsGeometryManager {
     #stage;
-    #ec = !1;
-    #tc = !1;
+    #ec = false;
+    #tc = false;
     constructor(stage) {
         this.#stage = stage;
     }
-    coordsX = (i) => {
-        let o = this.#stage;
-        let t = Array.from(o.selectedObjectElements.keys());
+    coordsX = (coordsX) => {
+        const selectedObjectElements = Array.from(this.#stage.selectedObjectElements.keys());
         let n = [];
         let f = "canvas";
         let m = "";
         let p = Symbol();
-        for (let a of t) {
-            let t = pt(a, o.canvas);
-            "viewport" === f && (t = gt(o.currentWorkspace).multiply(t));
+        for (let a of selectedObjectElements) {
+            let t = pt(a, this.#stage.canvas);
+            "viewport" === f && (t = gt(this.#stage.currentWorkspace).multiply(t));
             let e = t.inverse();
             let l = ct(a);
             let r = ft(m, "px");
@@ -47,15 +46,15 @@ class ElementsGeometryManager {
             n.push(di(s, t));
         }
         let c = ci(n).x;
-        o.undoManager.checkpoint("coords.x", "#geometry-panel");
-        for (let o of t) {
+        this.#stage.undoManager.checkpoint("coords.x", "#geometry-panel");
+        for (let o of selectedObjectElements) {
             let {
                 userToDisplayTransform: t,
                 displayToUserTransform: e,
                 userTransform: l,
                 unitTransform: r,
             } = o[p];
-            let s = i * r.a;
+            let s = coordsX * r.a;
             let a = DOMMatrix.fromMatrix(l);
             a.multiplySelf(e);
             a.translateSelf(s - c, 0);
@@ -63,16 +62,15 @@ class ElementsGeometryManager {
             o.setAttribute("transform", a.toString());
         }
     };
-    coordsY = (i) => {
-        let o = this.#stage;
-        let t = Array.from(o.selectedObjectElements.keys());
+    coordsY = (coordsY) => {
+        const selectedObjectElements = Array.from(this.#stage.selectedObjectElements.keys());
         let n = [];
         let f = "canvas";
         let m = "";
         let p = Symbol();
-        for (let a of t) {
-            let t = pt(a, o.canvas);
-            "viewport" === f && (t = gt(o.currentWorkspace).multiply(t));
+        for (let a of selectedObjectElements) {
+            let t = pt(a, this.#stage.canvas);
+            "viewport" === f && (t = gt(this.#stage.currentWorkspace).multiply(t));
             let e = t.inverse();
             let l = ct(a);
             let r = ft(m, "px");
@@ -86,15 +84,15 @@ class ElementsGeometryManager {
             n.push(di(s, t));
         }
         let c = ci(n).y;
-        o.undoManager.checkpoint("coords.y", "#geometry-panel");
-        for (let o of t) {
+        this.#stage.undoManager.checkpoint("coords.y", "#geometry-panel");
+        for (let o of selectedObjectElements) {
             let {
                 userToDisplayTransform: t,
                 displayToUserTransform: e,
                 userTransform: l,
                 unitTransform: r,
             } = o[p];
-            let s = i * r.d;
+            let s = coordsY * r.d;
             let a = DOMMatrix.fromMatrix(l);
             a.multiplySelf(e);
             a.translateSelf(0, s - c);
@@ -103,18 +101,17 @@ class ElementsGeometryManager {
         }
     };
     width = (y, u = false) => {
-        let T = this.#stage;
-        let h = Array.from(T.selectedObjectElements.keys());
+        let h = Array.from(this.#stage.selectedObjectElements.keys());
         let d = "canvas";
         let t = "";
         let g = ft(t, "px");
-        T.undoManager.checkpoint("width", "#geometry-panel");
+        this.#stage.undoManager.checkpoint("width", "#geometry-panel");
         if (1 === h.length) {
             let t = h[0];
             let e = Wi(t);
             let l = ct(t);
-            let r = pt(t, T.canvas);
-            "viewport" === d && (r = gt(T.currentWorkspace).multiply(r));
+            let r = pt(t, this.#stage.canvas);
+            "viewport" === d && (r = gt(this.#stage.currentWorkspace).multiply(r));
             let s = Kt(
                 new DOMPoint(e.x, e.y).matrixTransform(r),
                 new DOMPoint(e.x + e.width, e.y).matrixTransform(r)
@@ -133,8 +130,8 @@ class ElementsGeometryManager {
             let f = Symbol();
             for (let s of h) {
                 let t = ct(s);
-                let e = pt(s, T.canvas);
-                "viewport" === d && (e = gt(T.currentWorkspace).multiply(e));
+                let e = pt(s, this.#stage.canvas);
+                "viewport" === d && (e = gt(this.#stage.currentWorkspace).multiply(e));
                 let l = e.inverse();
                 let r = di(Wi(s), e);
                 s[f] = {
@@ -168,18 +165,17 @@ class ElementsGeometryManager {
         }
     };
     height = (y, u = false) => {
-        let T = this.#stage;
-        let h = Array.from(T.selectedObjectElements.keys());
+        let h = Array.from(this.#stage.selectedObjectElements.keys());
         let d = "canvas";
         let t = "";
         let g = ft(t, "px");
-        T.undoManager.checkpoint("height", "#geometry-panel");
+        this.#stage.undoManager.checkpoint("height", "#geometry-panel");
         if (1 === h.length) {
             let t = h[0];
             let e = Wi(t);
             let l = ct(t);
-            let r = pt(t, T.canvas);
-            "viewport" === d && (r = gt(T.currentWorkspace).multiply(r));
+            let r = pt(t, this.#stage.canvas);
+            "viewport" === d && (r = gt(this.#stage.currentWorkspace).multiply(r));
             let s = Kt(
                 new DOMPoint(e.x, e.y).matrixTransform(r),
                 new DOMPoint(e.x, e.y + e.height).matrixTransform(r)
@@ -198,8 +194,8 @@ class ElementsGeometryManager {
             let f = Symbol();
             for (let s of h) {
                 let t = ct(s);
-                let e = pt(s, T.canvas);
-                "viewport" === d && (e = gt(T.currentWorkspace).multiply(e));
+                let e = pt(s, this.#stage.canvas);
+                "viewport" === d && (e = gt(this.#stage.currentWorkspace).multiply(e));
                 let l = e.inverse();
                 let r = di(Wi(s), e);
                 s[f] = {
@@ -273,25 +269,24 @@ class ElementsGeometryManager {
         if (s) {
         }
     };
-    get() {
+    get = (svgNode) => {
         let x = 0;
-        let M = 0;
-        let S = 0;
-        let v = 0;
-        let w = 0;
-        let D = this.#stage;
-        let O = Array.from(D.selectedObjectElements.keys());
-        if (1 === O.length) {
+        let y = 0;
+        let width = 0;
+        let height = 0;
+        let rotation = 0;
+        const selectedObjectElements = Array.from(this.#stage.selectedObjectElements.keys());
+        if (1 === selectedObjectElements.length || svgNode) {
             let t = "canvas";
             let e = "";
             let l = 1;
-            let r = O[0];
+            let r = svgNode || selectedObjectElements[0];
             let s = Wi(r);
             let a = e ? " " + e : "";
             let o = 1 / Math.pow(10, l - 1);
-            let i = pt(r, D.canvas);
+            let i = pt(r, this.#stage.canvas);
             let n = ft("px", e);
-            "viewport" === t && (i = gt(D.currentWorkspace).multiply(i));
+            "viewport" === t && (i = gt(this.#stage.currentWorkspace).multiply(i));
             let f = [
                 new DOMPoint(s["x"], s["y"]),
                 new DOMPoint(s["x"] + s["width"], s["y"]),
@@ -303,23 +298,23 @@ class ElementsGeometryManager {
             let m = bt(r);
             let p = Ot(m, s).matrixTransform(i);
             p = p.matrixTransform(n);
-            let c = Math.min(...f.map((t) => t["x"]));
-            let y = Math.min(...f.map((t) => t["y"]));
+            let minX = Math.min(...f.map((t) => t["x"]));
+            let minY = Math.min(...f.map((t) => t["y"]));
             let u = Kt(f[0], f[1]);
             let T = Kt(f[1], f[2]);
             let h = p["x"];
             let d = p["y"];
             let g = Ct(r);
-            x = te(c, l);
-            M = te(y, l);
-            S = te(u, l);
-            v = te(T, l);
-            if (!1 === this.#ec) {
+            x = te(minX, l);
+            y = te(minY, l);
+            width = te(u, l);
+            height = te(T, l);
+            if (!this.#ec) {
             }
-            if (!1 === this.#tc) {
+            if (!this.#tc) {
             }
-            w = te(g, 1);
-        } else if (O.length > 1) {
+            rotation = te(g, 1);
+        } else if (selectedObjectElements.length > 1) {
             let t = "canvas";
             let e = "";
             let l = 1;
@@ -327,43 +322,43 @@ class ElementsGeometryManager {
             let s = 1 / Math.pow(10, l - 1);
             let a = ft("px", e);
             let o = new DOMMatrix();
-            "viewport" === t && (o = gt(D.currentWorkspace));
-            let i = O.map((t) => {
-                let e = pt(t, D.canvas);
+            "viewport" === t && (o = gt(this.#stage.currentWorkspace));
+            let i = selectedObjectElements.map((t) => {
+                let e = pt(t, this.#stage.canvas);
                 e = o.multiply(e);
                 let l = Wi(t);
                 l = di(l, e);
                 l = di(l, a);
                 return l;
             });
-            let n = ut(D.canvas).inverse();
+            let n = ut(this.#stage.canvas).inverse();
             let f = o.multiply(n);
             let m = ci(i);
-            let p = kt(O, !1).matrixTransform(f);
+            let p = kt(selectedObjectElements, false).matrixTransform(f);
             p = p.matrixTransform(a);
-            let c = m.x;
-            let y = m.y;
+            let minX = m.x;
+            let minY = m.y;
             let u = m.width;
             let T = m.height;
             let h = p.x;
             let d = p.y;
-            x = te(c, l);
-            M = te(y, l);
-            S = te(u, l);
-            v = te(T, l);
-            if (!1 === this.#ec) {
+            x = te(minX, l);
+            y = te(minY, l);
+            width = te(u, l);
+            height = te(T, l);
+            if (!this.#ec) {
             }
-            if (!1 === this.#tc) {
+            if (!this.#tc) {
             }
-            w = 0;
+            rotation = 0;
         }
         return {
-            x: x,
-            y: M,
-            width: S,
-            height: v,
-            rotation: w,
-            isSelected: O.length > 0,
+            x,
+            y,
+            width,
+            height,
+            rotation,
+            isSelected: selectedObjectElements.length > 0,
         };
     }
 }
