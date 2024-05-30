@@ -87,7 +87,7 @@ import ElementsGeometryManager from "./support/elementsGeometryManager";
 import ImportManager from "./support/importManager";
 import ExportManager from "./support/exportManager";
 class Stage {
-    version = "1.2.41";
+    version = "1.2.46";
     #scale = 1;
     #geometryPrecision = 3;
     get geometryPrecision() {
@@ -375,13 +375,18 @@ class Stage {
     get modkeys() {
         return this.#modkeys;
     }
-    set modkeys(e) {
-        this.#modkeys = e;
+    set modkeys(val) {
+        this.#modkeys = val;
         this.#board.dispatchEvent(new CustomEvent("modkeyschange"));
     }
     shiftKey = false;
     ctrlKey = false;
     altKey = false;
+    #keyMap = {
+        shiftKey: 'shiftKey',
+        ctrlKey: 'ctrlKey',
+        altKey: 'altKey'
+    };
     #textInputMode = false;
     get textInputMode() {
         return this.#textInputMode;
@@ -670,17 +675,22 @@ class Stage {
             ((this.#selectedTextRange = ay),
                 this.#board.dispatchEvent(new CustomEvent("selectedtextrangechange")));
     };
-    #pointerdown = (e) => {
-        const { shiftKey: t, ctrlKey: r, altKey: a, clientX: o, clientY: s } = e;
-        this.modkeys.shift = t;
-        this.shiftKey = t;
-        this.ctrlKey = r;
-        this.altKey = a;
-        this.#pointerClientPoint = new DOMPoint(o, s);
+    setKeys = (shiftKey, ctrlKey, altKey) => {
+        this.shiftKey = shiftKey;
+        this.ctrlKey = ctrlKey;
+        this.altKey = altKey;
+    };
+    #pointerdown = (event) => {
+        const { shiftKey, ctrlKey, altKey, clientX, clientY } = event;
+        // this.modkeys.shift = shiftKey;
+
+        this.setKeys(shiftKey, ctrlKey, altKey);
+
+        this.#pointerClientPoint = new DOMPoint(clientX, clientY);
         {
             let t = 1;
             let r = null;
-            for (this.#PM.push(e); this.#PM.length > 8;) {
+            for (this.#PM.push(event); this.#PM.length > 8;) {
                 this.#PM.shift();
             }
             for (let e of this.#PM) {
@@ -707,17 +717,13 @@ class Stage {
     };
     #pointermove = ($event) => {
         const { shiftKey, ctrlKey, altKey, clientX, clientY } = $event;
-        this.shiftKey = shiftKey;
-        this.ctrlKey = ctrlKey;
-        this.altKey = altKey;
+        this.setKeys(shiftKey, ctrlKey, altKey);
         this.#pointerClientPoint = new DOMPoint(clientX, clientY);
         this.crosshairManager.update(clientX, clientY);
     };
     #pointerup = ($event) => {
         const { shiftKey, ctrlKey, altKey, clientX, clientY } = $event;
-        this.shiftKey = shiftKey;
-        this.ctrlKey = ctrlKey;
-        this.altKey = altKey;
+        this.setKeys(shiftKey, ctrlKey, altKey);
         this.#pointerClientPoint = new DOMPoint(clientX, clientY);
     };
     getHitWorkspaceElements = (a, o) => {
@@ -766,6 +772,7 @@ class Stage {
         this.selectedElements.set(o);
     };
     insertArtwork = (t, a = "boardCenter") => {
+
         let o = this.currentContainer || this.currentWorkspace;
         let n = [];
         let e = this.extractArtwork();

@@ -188,9 +188,6 @@ class OtherShapeTool {
             window.removeEventListener("pointermove", e);
             window.removeEventListener("pointerup", pointerup);
             this.#stage.snapManager.snapEnd();
-            this.#stage.board.dispatchEvent(new CustomEvent("elementupdated", {
-                detail: v
-            }));
         };
         window.addEventListener("pointerup", pointerup);
     }
@@ -272,9 +269,6 @@ class OtherShapeTool {
         const pointerup = () => {
             window.removeEventListener("pointermove", t);
             window.removeEventListener("pointerup", pointerup);
-            this.#stage.board.dispatchEvent(new CustomEvent("elementupdated", {
-                detail: y
-            }));
         };
         window.addEventListener("pointerup", pointerup);
     }
@@ -359,9 +353,6 @@ class OtherShapeTool {
         const pointerup = () => {
             window.removeEventListener("pointermove", t);
             window.removeEventListener("pointerup", pointerup);
-            this.#stage.board.dispatchEvent(new CustomEvent("elementupdated", {
-                detail: m
-            }));
         };
         window.addEventListener("pointerup", pointerup);
     }
@@ -449,9 +440,6 @@ class OtherShapeTool {
         const pointerup = () => {
             window.removeEventListener("pointermove", t);
             window.removeEventListener("pointerup", pointerup);
-            this.#stage.board.dispatchEvent(new CustomEvent("elementupdated", {
-                detail: f
-            }));
         };
         window.addEventListener("pointerup", pointerup);
     }
@@ -570,9 +558,6 @@ class OtherShapeTool {
             window.removeEventListener("pointermove", e);
             window.removeEventListener("pointerup", pointerup);
             this.#stage.snapManager.snapEnd();
-            this.#stage.board.dispatchEvent(new CustomEvent("elementupdated", {
-                detail: v
-            }));
         };
         window.addEventListener("pointerup", pointerup);
     }
@@ -684,9 +669,6 @@ class OtherShapeTool {
             window.removeEventListener("keydown", e);
             window.removeEventListener("pointermove", t);
             window.removeEventListener("pointerup", pointerup);
-            this.#stage.board.dispatchEvent(new CustomEvent("elementupdated", {
-                detail: y
-            }));
         };
         window.addEventListener("pointerup", pointerup);
     }
@@ -786,9 +768,6 @@ class OtherShapeTool {
             window.removeEventListener("keydown", e);
             window.removeEventListener("pointermove", t);
             window.removeEventListener("pointerup", pointerup);
-            this.#stage.board.dispatchEvent(new CustomEvent("elementupdated", {
-                detail: y
-            }));
         };
         window.addEventListener("pointerup", pointerup);
     }
@@ -883,9 +862,6 @@ class OtherShapeTool {
         const pointerup = () => {
             window.removeEventListener("pointermove", t);
             window.removeEventListener("pointerup", pointerup);
-            this.#stage.board.dispatchEvent(new CustomEvent("elementupdated", {
-                detail: m
-            }));
         };
         window.addEventListener("pointerup", pointerup);
     }
@@ -946,9 +922,6 @@ class OtherShapeTool {
             window.removeEventListener("pointermove", e);
             window.removeEventListener("pointerup", pointerup);
             this.#stage.snapManager.snapEnd();
-            this.#stage.board.dispatchEvent(new CustomEvent("elementupdated", {
-                detail: d
-            }));
         };
         window.addEventListener("pointerup", pointerup);
     }
@@ -1048,9 +1021,6 @@ class OtherShapeTool {
             window.removeEventListener("pointermove", e);
             window.removeEventListener("pointerup", pointerup);
             this.#stage.snapManager.snapEnd();
-            this.#stage.board.dispatchEvent(new CustomEvent("elementupdated", {
-                detail: d
-            }));
         };
         window.addEventListener("pointerup", pointerup);
     }
@@ -1129,9 +1099,6 @@ class OtherShapeTool {
             window.removeEventListener("pointermove", t);
             window.removeEventListener("pointerup", pointerup);
             this.#stage.snapManager.snapEnd();
-            this.#stage.board.dispatchEvent(new CustomEvent("elementupdated", {
-                detail: d
-            }));
         };
         window.addEventListener("pointerup", pointerup);
     }

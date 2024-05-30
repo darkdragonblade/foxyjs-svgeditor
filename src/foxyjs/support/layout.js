@@ -8,7 +8,6 @@ class Layout {
             </g>
             <g id="workspaces">
                 <rect id="whitespace" x="-1000000" y="-1000000" width="2000000" height="2000000"></rect>  
-                <foreignObject uid="htmlPlugins" x="-1000000" y="-1000000" width="2000000" height="2000000"></foreignObject>
                 <g uid="foxy-workspace" xmlns="http://www.w3.org/2000/svg"  viewBox="0 0 500 500">
                     <defs></defs>
                 </g>
@@ -29,5 +28,6 @@ class Layout {
                 <g id="transform-hud"></g>
                 <g id="vektor-hud"></g>
             </g>
+            <foreignObject style="pointer-events: none;" uid="htmlPlugins" x="-1000000" y="-1000000" width="2000000" height="2000000"></foreignObject>
         </g>`}
 } export default Layout;

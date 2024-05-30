@@ -26,29 +26,29 @@ class PenTool {
     #Q;
     #Xe;
     #Ze;
-    #Ke = !1;
-    constructor(e) {
-        this.#stage = e;
+    #disabled = false;
+    constructor(stage) {
+        this.#stage = stage;
     }
     enable = () => {
-        this.enabled = !0;
+        this.enabled = true;
         this.#stage.board.style.cursor = "crosshair";
         this.#stage.splineTool.mode = "edit";
         this.#stage.workspaces.addEventListener(
             "pointerdown",
-            (this.#Xe = (e) => {
-                this.#paint(e);
+            (this.#Xe = (event) => {
+                this.#paint(event);
             })
         );
         this.#stage.splineTool.splineHud.addEventListener(
             "nodeclick",
-            (this.#Ze = (e) => {
-                this.#Qe(e);
+            (this.#Ze = (event) => {
+                this.#Qe(event);
             })
         );
     };
     disable = () => {
-        this.enabled = !1;
+        this.enabled = false;
         this.#stage.workspaces.removeEventListener("pointerdown", this.#Xe);
         this.#stage.splineTool.splineHud.removeEventListener("nodeclick", this.#Ze);
         this.release();
@@ -58,23 +58,22 @@ class PenTool {
         this.#stage.cubicBezierSegHud.hide();
         this.#stage.cubicBezierSegHud.hud.dispatchEvent(new CustomEvent("release"));
     };
-    #paint = (e) => {
-        if (!1 === this.#Ke) {
-            this.#Ke = !0;
-            this.#painting(new DOMPoint(e.clientX, e.clientY));
+    #paint = (event) => {
+        const { clientX, clientY, buttons } = event;
+        if (buttons > 1) return;
+        if (!this.#disabled) {
+            this.#disabled = true;
+            this.#painting(new DOMPoint(clientX, clientY));
         }
     };
     #Qe = (e) => {
         let t = e.detail;
-        if (!1 === this.#Ke && "mid" !== t.position) {
-            this.#Ke = !0;
+        if (!this.#disabled && "mid" !== t.position) {
+            this.#disabled = true;
             this.#painting(t);
         }
     };
-    paint = (t, callback) => {
-        this.#painting(t, callback);
-    }
-    #painting = (c, callback) => {
+    #painting = (c) => {
         let e;
         let t;
         let s;
@@ -117,8 +116,9 @@ class PenTool {
         }
         this.#stage.workspaces.addEventListener(
             "pointerup",
-            (t = (e) => {
-                let t = new DOMPoint(e.clientX, e.clientY);
+            (t = (event) => {
+                if (event.button > 0) return;
+                let t = new DOMPoint(event.clientX, event.clientY);
                 null === g
                     ? c instanceof DOMPoint && Kt(c, t) >= 4 && r()
                     : Kt(n, t) < 4
@@ -626,8 +626,7 @@ class PenTool {
             this.#stage.cubicBezierSegHud.hud.removeEventListener("release", u);
             this.#stage.splineTool.mode = "edit";
             this.#stage.cubicBezierSegHud.hide();
-            this.#Ke = !1;
-            callback?.();
+            this.#disabled = false;
         };
     }
 }

@@ -1,19 +1,20 @@
 const ac = {
-    childList: !0,
-    attributes: !0,
-    characterData: !0,
-    subtree: !0,
-    attributeOldValue: !0,
-    characterDataOldValue: !0,
+    childList: true,
+    attributes: true,
+    characterData: true,
+    subtree: true,
+    attributeOldValue: true,
+    characterDataOldValue: true,
 };
+
 class UndoManager {
     #stage;
     #Observer;
     #groups = [];
     #position = 0;
-    #disabled = !1;
-    constructor(e) {
-        this.#stage = e;
+    #disabled = false;
+    constructor(stage) {
+        this.#stage = stage;
         this.#Observer = new MutationObserver((t) => {
             for (let e of t) this.#ti(e);
         });

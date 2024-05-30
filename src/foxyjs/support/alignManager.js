@@ -7,12 +7,12 @@ class AlignManager {
     canAlign = () => {
         return this.#stage.selectedObjectElements.size > 0;
     };
-    align = (e, t) => {
-        const i = Array.from(this.#stage.selectedObjectElements.keys());
-        const h = document
+    align = (e, t, elements, rect) => {
+        const nodes = elements || Array.from(this.#stage.selectedObjectElements.keys());
+        const h = rect || document
             .querySelector("#background-outlines")
             ?.getBoundingClientRect();
-        this.#align(i, t || h, e);
+        this.#align(nodes, t || h, e);
     };
     #align = (i, n, x, e = !0) => {
         if (!1 === e)

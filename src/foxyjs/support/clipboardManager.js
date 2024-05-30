@@ -42,7 +42,9 @@ class Clipboard {
         );
     };
     paste = async () => {
-        if (this.#stage.textInputMode) document.execCommand("paste");
+        if (this.#stage.textInputMode) {
+            document.execCommand("paste");
+        }
         else {
             const e = await this.getClipboardData();
             if (e) {

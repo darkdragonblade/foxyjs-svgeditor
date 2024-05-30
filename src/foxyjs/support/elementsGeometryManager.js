@@ -29,7 +29,7 @@ class ElementsGeometryManager {
         let n = [];
         let f = "canvas";
         let m = "";
-        let p = Symbol();
+        let symbol = Symbol();
         for (let a of selectedObjectElements) {
             let t = pt(a, this.#stage.canvas);
             "viewport" === f && (t = gt(this.#stage.currentWorkspace).multiply(t));
@@ -37,7 +37,7 @@ class ElementsGeometryManager {
             let l = ct(a);
             let r = ft(m, "px");
             let s = Wi(a);
-            a[p] = {
+            a[symbol] = {
                 userToDisplayTransform: t,
                 displayToUserTransform: e,
                 userTransform: l,
@@ -53,7 +53,7 @@ class ElementsGeometryManager {
                 displayToUserTransform: e,
                 userTransform: l,
                 unitTransform: r,
-            } = o[p];
+            } = o[symbol];
             let s = coordsX * r.a;
             let a = DOMMatrix.fromMatrix(l);
             a.multiplySelf(e);
@@ -67,7 +67,7 @@ class ElementsGeometryManager {
         let n = [];
         let f = "canvas";
         let m = "";
-        let p = Symbol();
+        let symbol = Symbol();
         for (let a of selectedObjectElements) {
             let t = pt(a, this.#stage.canvas);
             "viewport" === f && (t = gt(this.#stage.currentWorkspace).multiply(t));
@@ -75,7 +75,7 @@ class ElementsGeometryManager {
             let l = ct(a);
             let r = ft(m, "px");
             let s = Wi(a);
-            a[p] = {
+            a[symbol] = {
                 userToDisplayTransform: t,
                 displayToUserTransform: e,
                 userTransform: l,
@@ -91,7 +91,7 @@ class ElementsGeometryManager {
                 displayToUserTransform: e,
                 userTransform: l,
                 unitTransform: r,
-            } = o[p];
+            } = o[symbol];
             let s = coordsY * r.d;
             let a = DOMMatrix.fromMatrix(l);
             a.multiplySelf(e);

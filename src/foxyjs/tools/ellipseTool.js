@@ -113,9 +113,6 @@ class EllipseTool {
                     window.removeEventListener("pointermove", pointermove);
                     window.removeEventListener("pointerup", pointerup);
                     this.#stage.snapManager.snapEnd();
-                    this.#stage.board.dispatchEvent(new CustomEvent("elementupdated", {
-                        detail: svgEllipse
-                    }));
                 };
                 window.addEventListener("pointerup", pointerup);
             }

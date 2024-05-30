@@ -48,7 +48,6 @@ class CubicBezierSegHud {
   Wt;
   ei;
   ti;
-  #activePath;
   hud = document.querySelector("#cubic-bezier-seg-hud");
   ["#container"];
   ["#outline"];
@@ -88,7 +87,6 @@ class CubicBezierSegHud {
     this["#control-line-2"] = this.hud.querySelector('[uid="control-line-2"]');
   }
   show = (t, e, n = "end", i = null) => {
-    this.#activePath = t;
     this.hud.hasAttribute("drawing") && this.hide();
     this.hud.setAttribute("drawing", "");
     this.#stage.snapManager.snapStart(!0);
@@ -355,9 +353,6 @@ class CubicBezierSegHud {
       window.removeEventListener("pointerup", this.Gt);
       this.#stage.board.removeEventListener("zoomchange", this.D);
       this.#stage.board.removeEventListener("contextmenu", this.Kt);
-      this.#stage.board.dispatchEvent(new CustomEvent("elementupdated", {
-        detail: this.#activePath
-      }));
     }
   };
 }

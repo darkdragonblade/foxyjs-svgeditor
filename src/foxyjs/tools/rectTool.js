@@ -160,9 +160,6 @@ class RectTool {
                 window.removeEventListener("pointermove", pointermoveEvent);
                 window.removeEventListener("pointerup", pointerupEvent);
                 this.#stage.snapManager.snapEnd();
-                this.#stage.board.dispatchEvent(new CustomEvent("elementupdated", {
-                    detail: rect
-                }));
             });
         }
     }
