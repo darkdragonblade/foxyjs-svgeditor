@@ -38,8 +38,9 @@ class CrosshairManager {
     }
     update = (x, y) => {
         if (!this.enabled) return;
-        this.#vertical.style.left = x + 'px';
-        this.#horizontal.style.top = y + 'px';
+        const { x: ox, y: oy } = this.#stage.svg.getBoundingClientRect();
+        this.#vertical.style.left = (x - ox) + 'px';
+        this.#horizontal.style.top = (y - oy) + 'px';
     }
 
 }

@@ -664,15 +664,15 @@ class Stage {
         this.#scale = this.canvas.getMatrix().a;
         this.board.dispatchEvent(new CustomEvent("zoomchange"));
     };
-    #setSelectedTextRange = (ay) => {
-        (null === this.#selectedTextRange && null === ay) ||
+    #setSelectedTextRange = (range) => {
+        (null === this.#selectedTextRange && null === range) ||
             (this.#selectedTextRange &&
-                ay &&
-                this.#selectedTextRange.startContainer === ay.startContainer &&
-                this.#selectedTextRange.endContainer === ay.endContainer &&
-                this.#selectedTextRange.startOffset === ay.startOffset &&
-                this.#selectedTextRange.endOffset === ay.endOffset) ||
-            ((this.#selectedTextRange = ay),
+                range &&
+                this.#selectedTextRange.startContainer === range.startContainer &&
+                this.#selectedTextRange.endContainer === range.endContainer &&
+                this.#selectedTextRange.startOffset === range.startOffset &&
+                this.#selectedTextRange.endOffset === range.endOffset) ||
+            ((this.#selectedTextRange = range),
                 this.#board.dispatchEvent(new CustomEvent("selectedtextrangechange")));
     };
     setKeys = (shiftKey, ctrlKey, altKey) => {
@@ -1015,7 +1015,11 @@ class Stage {
         }
         return foxyGrid;
     };
+    reload = () => {
+        this.undoManager.clear();
+    }
     uninstall = () => {
+        this.board.remove();
         window.removeEventListener("pointerdown", this.#pointerdown, true);
         window.removeEventListener("pointermove", this.#pointermove);
         window.removeEventListener("pointerup", this.#pointerup);

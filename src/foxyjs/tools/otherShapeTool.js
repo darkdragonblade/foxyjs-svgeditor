@@ -97,7 +97,7 @@ class OtherShapeTool {
             })
         );
     }
-    #frame(t) {
+    #frame = (t) => {
         let e;
         let n = this.#stage.board;
         let l = this.#stage.currentContainer || this.#stage.currentWorkspace;
@@ -191,7 +191,7 @@ class OtherShapeTool {
         };
         window.addEventListener("pointerup", pointerup);
     }
-    #ring(s) {
+    #ring = (s) => {
         let t;
         let e = this.#stage.board;
         let n = this.#stage.currentContainer || this.#stage.currentWorkspace;
@@ -272,7 +272,7 @@ class OtherShapeTool {
         };
         window.addEventListener("pointerup", pointerup);
     }
-    #pie(s) {
+    #pie = (s) => {
         let t;
         let e = this.#stage.board;
         let n = this.#stage.currentContainer || this.#stage.currentWorkspace;
@@ -356,7 +356,7 @@ class OtherShapeTool {
         };
         window.addEventListener("pointerup", pointerup);
     }
-    #crescent(o) {
+    #crescent = (o) => {
         let t;
         let e = this.#stage.board;
         let n = this.#stage.currentContainer || this.#stage.currentWorkspace;
@@ -443,7 +443,7 @@ class OtherShapeTool {
         };
         window.addEventListener("pointerup", pointerup);
     }
-    #triangle(t) {
+    #triangle = (t) => {
         let e;
         let n;
         let l = this.#stage.board;
@@ -561,7 +561,7 @@ class OtherShapeTool {
         };
         window.addEventListener("pointerup", pointerup);
     }
-    #nGon(s) {
+    #nGon = (s) => {
         let t;
         let e;
         let n = this.#stage.board;
@@ -672,7 +672,7 @@ class OtherShapeTool {
         };
         window.addEventListener("pointerup", pointerup);
     }
-    #star(s) {
+    #star = (s) => {
         let t;
         let e;
         let n = this.#stage.board;
@@ -771,7 +771,7 @@ class OtherShapeTool {
         };
         window.addEventListener("pointerup", pointerup);
     }
-    #cog(o) {
+    #cog = (o) => {
         let t;
         let e = this.#stage.board;
         let n = this.#stage.currentContainer || this.#stage.currentWorkspace;
@@ -865,7 +865,7 @@ class OtherShapeTool {
         };
         window.addEventListener("pointerup", pointerup);
     }
-    #arrow(t) {
+    #arrow = (t) => {
         let e;
         let n = this.#stage.board;
         let l = this.#stage.currentContainer || this.#stage.currentWorkspace;
@@ -925,7 +925,7 @@ class OtherShapeTool {
         };
         window.addEventListener("pointerup", pointerup);
     }
-    #cross(t) {
+    #cross = (t) => {
         let e;
         let n = this.#stage.board;
         let l = this.#stage.currentContainer || this.#stage.currentWorkspace;

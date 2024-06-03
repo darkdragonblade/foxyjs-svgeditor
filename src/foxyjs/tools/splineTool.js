@@ -84,8 +84,8 @@ class SplineTool {
   ["#curve-grippies"];
   ["#primary-node-grippies"];
   ["#secondary-node-grippies"];
-  constructor(e) {
-    this.#stage = e;
+  constructor(stage) {
+    this.#stage = stage;
     this.l = !1;
     this.zi = 0;
     this.Oi = [];
@@ -466,7 +466,8 @@ class SplineTool {
       },
     });
     this.splineHud.dispatchEvent(l);
-    o.addEventListener(
+
+    window.addEventListener(
       "pointermove",
       (u = (i) => {
         let e = new DOMPoint(i.clientX, i.clientY);
@@ -475,7 +476,7 @@ class SplineTool {
         let l = !1 === qt(h, e, null);
         h = e;
         if (this.mode?.startsWith("edit") && !0 === s && !0 === l) {
-          o.removeEventListener("pointermove", u);
+          window.removeEventListener("pointermove", u);
           let e = new ee(i.clientX - n.clientX, i.clientY - n.clientY);
           a = !0;
           let t = Math.abs(e.x) > Math.abs(e.y) ? "horizontal" : "vertical";
@@ -491,11 +492,11 @@ class SplineTool {
         }
       })
     );
-    o.addEventListener(
+    window.addEventListener(
       "pointerup",
       (s = (t) => {
-        o.removeEventListener("pointermove", u);
-        o.removeEventListener("pointerup", s);
+        window.removeEventListener("pointermove", u);
+        window.removeEventListener("pointerup", s);
         if (!1 === a && !1 === l.defaultPrevented) {
           let e = new CustomEvent("nodeclick", {
             detail: {

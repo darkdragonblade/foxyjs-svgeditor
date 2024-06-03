@@ -7,11 +7,11 @@ class TransformSelect {
     #ue;
     #xe;
     #me;
-    #ge = !1;
-    constructor(e) {
-        this.#stage = e;
+    #disabled = false;
+    constructor(stage) {
+        this.#stage = stage;
     }
-    enable() {
+    enable = () => {
         this.#stage.rubberBand.enabled = true;
         this.#stage.board.style.cursor = "auto";
         this.#stage.workspaces.addEventListener(
@@ -27,7 +27,7 @@ class TransformSelect {
             })
         );
     }
-    disable() {
+    disable = () => {
         this.#stage.rubberBand.enabled = false;
         this.#stage.workspaces.removeEventListener("contextmenu", this.#xe);
         this.#stage.workspaces.removeEventListener("pointerdown", this.#me);
@@ -59,7 +59,7 @@ class TransformSelect {
         let c = new DOMPoint(s, l);
         let g = c;
         let m = "touch" === i ? 9 : 3;
-        this.#ge = !1;
+        this.#disabled = false;
         window.addEventListener(
             "pointermove",
             (r = (s) => {
@@ -71,7 +71,7 @@ class TransformSelect {
                 g = e;
                 if (!0 === l && !0 === i) {
                     window.removeEventListener("pointermove", r);
-                    this.#ge = !0;
+                    this.#disabled = true;
                     let e = new ee(s.clientX - a.clientX, s.clientY - a.clientY);
                     let t = Math.abs(e.x) > Math.abs(e.y) ? "horizontal" : "vertical";
                     this.#ke(a, s, t);
@@ -225,14 +225,14 @@ class TransformSelect {
         this.#stage.selectedElements.sets(n);
     }
     #Ce(e, t) {
-        if (t.button > 0 || this.#ge) return;
+        if (t.button > 0 || this.#disabled) return;
         let s = this.#stage.board.querySelector("#transform-hud");
         let l = this.#stage.getHitWorkspaceElements(t.clientX, t.clientY);
         if (l.length > 0) {
             let s = l[l.length - 1];
             if (this.#stage.pointerClickCount % 2 === 1) {
 
-                this.#stage.transformTool.canEdit && this.#stage.isSelectableElement(s) && this.#ve(s);
+                this.#stage.isSelectableElement(s) && this.#ve(s);
             }
             else {
                 if (this.#stage.pointerClickCount % 2 === 0) {
@@ -274,6 +274,7 @@ class TransformSelect {
         let i = this.#we(l);
         let hasSelected = this.#stage.selectedElements.has(l);
         for (let e of i) this.#stage.selectedElements.has(e) && (hasSelected = true);
+
         if (t || s) {
             if (!t && s) {
                 if (0 === i.length) {
@@ -347,7 +348,8 @@ class TransformSelect {
             }
         } else {
             if (hasSelected) {
-                if ("scale" === this.#stage.transformTool.mode) {
+                const canEdit = this.#stage.transformTool.canEdit;
+                if ("scale" === this.#stage.transformTool.mode && canEdit) {
                     this.#stage.transformTool.mode = "rotate-and-skew";
                 } else {
                     this.#stage.transformTool.mode = "scale";

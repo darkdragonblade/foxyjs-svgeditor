@@ -347,7 +347,7 @@ svg[foxyjs] {
 
 #crosshair{
     display: none;
-    position: fixed;
+    position: absolute;
     top: 0px;
     left: 0px;
     width: 100%;
@@ -560,4 +560,8 @@ svg[foxyjs] {
 
 #manual-guides-hud .repr[data-selected] .grippie {
     fill: currentColor;
+}
+
+foreignObject[uid="htmlPlugins"] {
+    pointer-events: none;
 }
