@@ -1,4 +1,4 @@
 export default interface AlignManager {
     canAlign(): boolean;
-    align(type?: string, target?: HTMLElement | Element, nodes?: HTMLElement[]): void;
+    align(type?: string, target?: HTMLElement | Element, nodes?: Array<HTMLElement>): void;
 }

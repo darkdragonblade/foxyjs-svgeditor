@@ -24,8 +24,8 @@ class ElementsGeometryManager {
     constructor(stage) {
         this.#stage = stage;
     }
-    coordsX = (coordsX) => {
-        const selectedObjectElements = Array.from(this.#stage.selectedObjectElements.keys());
+    coordsX = (coordsX, elements) => {
+        const selectedObjectElements = elements || Array.from(this.#stage.selectedObjectElements.keys());
         let n = [];
         let f = "canvas";
         let m = "";
@@ -62,8 +62,8 @@ class ElementsGeometryManager {
             o.setAttribute("transform", a.toString());
         }
     };
-    coordsY = (coordsY) => {
-        const selectedObjectElements = Array.from(this.#stage.selectedObjectElements.keys());
+    coordsY = (coordsY, elements) => {
+        const selectedObjectElements = elements || Array.from(this.#stage.selectedObjectElements.keys());
         let n = [];
         let f = "canvas";
         let m = "";
@@ -100,8 +100,8 @@ class ElementsGeometryManager {
             o.setAttribute("transform", a.toString());
         }
     };
-    width = (y, u = false) => {
-        let h = Array.from(this.#stage.selectedObjectElements.keys());
+    width = (y, elements, u = false) => {
+        let h = elements || Array.from(this.#stage.selectedObjectElements.keys());
         let d = "canvas";
         let t = "";
         let g = ft(t, "px");
@@ -164,8 +164,8 @@ class ElementsGeometryManager {
             }
         }
     };
-    height = (y, u = false) => {
-        let h = Array.from(this.#stage.selectedObjectElements.keys());
+    height = (y, elements, u = false) => {
+        let h = elements || Array.from(this.#stage.selectedObjectElements.keys());
         let d = "canvas";
         let t = "";
         let g = ft(t, "px");
