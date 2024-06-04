@@ -27,6 +27,7 @@ class Layout {
                 <g id="rubber-band-hud"></g>
                 <g id="transform-hud"></g>
                 <g id="vektor-hud"></g>
+                <g id="crosshair-hud"></g>
             </g>
             <foreignObject style="pointer-events: none;" uid="htmlPlugins" x="-1000000" y="-1000000" width="2000000" height="2000000"></foreignObject>
         </g>`}

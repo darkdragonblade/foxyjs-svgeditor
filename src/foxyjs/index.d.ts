@@ -32,7 +32,7 @@ import TextManager from "./types/textManager";
 import TransformManager from "./types/transformManager";
 import UndoManager from "./types/undoManager";
 import ZoomManager from "./types/zoomManager";
-import CrosshairManager from "./support/crosshairManager";
+import CrosshairHud from "./tools/crosshairHud";
 
 declare class Stage {
     alignManager: AlignManager;
@@ -48,7 +48,7 @@ declare class Stage {
     transformManager: TransformManager;
     undoManager: UndoManager;
     zoomManager: ZoomManager;
-    crosshairManager: CrosshairManager;
+    crosshairHud: CrosshairHud;
     constructor(
         board: Element | HTMLElement,
         options?: {

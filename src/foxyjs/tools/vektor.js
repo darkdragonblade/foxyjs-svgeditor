@@ -88,6 +88,8 @@ class VektorTool {
 
         const dashed = this.#dashed?.childNodes[0] || Zi('svg:path');
         const arrow = this.#arrow?.childNodes[0] || Zi('svg:path');
+
+        console.error(arrow);
         const text = this.#text?.childNodes[0] || Zi('svg:text');
         this.#arrow?.childNodes?.[0] || this.#arrow.append(arrow);
         this.#dashed?.childNodes?.[0] || this.#dashed.append(dashed);

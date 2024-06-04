@@ -63,7 +63,7 @@ import ViewTool from "./tools/viewTool";
 import HoverManager from "./support/hoverManager";
 import ClipboardManager from "./support/clipboardManager";
 import RulerManager from "./support/rulerManager";
-import CrosshairManager from "./support/crosshairManager";
+import CrosshairHud from "./tools/crosshairHud";
 import SnapManager from "./support/snapManager";
 import SmartManager from "./support/smartManager";
 import GridManager from "./support/gridManager";
@@ -279,6 +279,10 @@ class Stage {
     get VektorTool() {
         return this.#vektorTool;
     }
+    #crosshairHud;
+    get crosshairHud() {
+        return this.#crosshairHud;
+    }
     #textHud;
     get textHud() {
         return this.#textHud;
@@ -306,10 +310,6 @@ class Stage {
     #rulerManager;
     get rulerManager() {
         return this.#rulerManager;
-    }
-    #crosshairManager;
-    get crosshairManager() {
-        return this.#crosshairManager;
     }
     #snapManager;
     get snapManager() {
@@ -428,7 +428,7 @@ class Stage {
         this.#clipboardManager = new ClipboardManager(this);
         this.#undoManager = new UndoManager(this);
         this.#rulerManager = new RulerManager(this);
-        this.#crosshairManager = new CrosshairManager(this);
+        this.#crosshairHud = new CrosshairHud(this);
         this.#manualManager = new ManualManager(this);
         this.#smartManager = new SmartManager(this);
         this.#gridManager = new GridManager(this);
@@ -447,7 +447,7 @@ class Stage {
         options.manualGuides && this.#manualManager.enable();
         options.showGrid && this.#gridManager.enable();
         options.showRulers && this.#rulerManager.enable();
-        options.crosshair && this.#crosshairManager.enable();
+        options.crosshair && this.#crosshairHud.enable();
         this.#snapManager = new SnapManager(this);
         this.#zoomManager = new ZoomManager(this);
         this.#zoomManager.enable();
@@ -719,7 +719,6 @@ class Stage {
         const { shiftKey, ctrlKey, altKey, clientX, clientY } = $event;
         this.setKeys(shiftKey, ctrlKey, altKey);
         this.#pointerClientPoint = new DOMPoint(clientX, clientY);
-        this.crosshairManager.update(clientX, clientY);
     };
     #pointerup = ($event) => {
         const { shiftKey, ctrlKey, altKey, clientX, clientY } = $event;

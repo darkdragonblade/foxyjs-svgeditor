@@ -41,7 +41,8 @@
     --fx-view-stroke: #d1d1d1;
     --fx-canvas-background: #f0f0f0;
     /* --fx-board-background: linear-gradient(45deg, #d6d6d6 25%, #0000 25%) 0px 0px/10px 10px, linear-gradient(-45deg, #d6d6d6 25%, #0000 25%) 0px 5px/10px 10px, linear-gradient(45deg, #0000 75%, #d6d6d6 75%) 5px -5px/10px 10px, linear-gradient(-45deg, #0000 75%, #d6d6d6 75%) -5px 0px/10px 10px, white; */
-    --fx-crosshair-border-color: #0663E5;
+    --fx-crosshair-stroke: #0663E5;
+    --fx-crosshair-stroke-dasharray:5 5;
 }
 
 /** stage **/
@@ -345,33 +346,20 @@ svg[foxyjs] {
 
 /** crosshair **/
 
-#crosshair{
-    display: none;
-    position: absolute;
-    top: 0px;
-    left: 0px;
-    width: 100%;
-    height: 100%;
+#crosshair-hud{
     pointer-events: none;
-    contain: strict;
-    font-size: 14px;
-    user-select: none;
 }
 
-#horizontal-crosshair{
-    height:1px;
-    width:100%;
-    position: absolute;
-    border-top:1px dashed var(--fx-crosshair-border-color);
-    border-bottom: 0;
+.crosshair-horizontal line{
+    stroke: var(--fx-crosshair-stroke);
+    stroke-dasharray: var(--fx-crosshair-stroke-dasharray);
+    vector-effect: non-scaling-stroke;
 }
 
-#vertical-crosshair{
-    width:1px;
-    height:100%;
-    position: absolute;
-    border-left:1px dashed var(--fx-crosshair-border-color);
-    border-right: 0;
+.crosshair-vertical line{
+    stroke: var(--fx-crosshair-stroke);
+    stroke-dasharray: var(--fx-crosshair-stroke-dasharray);
+    vector-effect: non-scaling-stroke;
 }
 
 /** rulers **/
