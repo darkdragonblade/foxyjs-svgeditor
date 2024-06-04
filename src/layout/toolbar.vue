@@ -311,7 +311,7 @@ export default {
       this.manualGuides = self.stage.manualManager.enabled;
       this.showGrid = self.stage.gridManager.enabled;
       this.smartGuides = self.stage.smartManager.enabled;
-      this.crosshair = self.stage.crosshairManager.enabled;
+      this.crosshair = self.stage.crosshairHud.enabled;
       this.rulers = self.stage.rulerManager.enabled;
       this.transparency = self.stage.viewTool.transparency;
     },
@@ -337,10 +337,10 @@ export default {
       }
     },
     toggleCrosshair() {
-      if (self.stage.crosshairManager.enabled) {
-        self.stage.crosshairManager.disable();
+      if (self.stage.crosshairHud.enabled) {
+        self.stage.crosshairHud.disable();
       } else {
-        self.stage.crosshairManager.enable();
+        self.stage.crosshairHud.enable();
       }
     },
     toggleRulers() {
