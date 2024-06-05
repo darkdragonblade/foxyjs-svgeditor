@@ -10,7 +10,7 @@ class AlignManager {
     align = (type, target, elements) => {
         const nodes = elements || Array.from(this.#stage.selectedObjectElements.keys());
         const targetRect = target || document.querySelector("#background-outlines");
-        this.#align(nodes, targetRect.getBoundingClientRect(), type);
+        this.#align(nodes, targetRect?.getBoundingClientRect(), type);
     };
     #align = (i, n, x, e = !0) => {
         if (!1 === e)

@@ -8,10 +8,10 @@ interface Geometry {
 }
 
 export default interface ElementsGeometryManager {
-    coordsX(value: number, elements: Array<HTMLElement>): void;
-    coordsY(value: number, elements: Array<HTMLElement>): void;
-    width(value: number, elements: Array<HTMLElement>): void;
-    height(value: number, elements: Array<HTMLElement>): void;
-    rotate(deg: number, elements: Array<HTMLElement>): void;
+    coordsX(value: number, elements?: Array<HTMLElement>): void;
+    coordsY(value: number, elements?: Array<HTMLElement>): void;
+    width(value: number, elements?: Array<HTMLElement>): void;
+    height(value: number, elements?: Array<HTMLElement>): void;
+    rotate(deg: number, elements?: Array<HTMLElement>): void;
     get(): Geometry;
 }

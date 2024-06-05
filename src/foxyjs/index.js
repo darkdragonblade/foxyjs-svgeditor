@@ -87,7 +87,7 @@ import ElementsGeometryManager from "./support/elementsGeometryManager";
 import ImportManager from "./support/importManager";
 import ExportManager from "./support/exportManager";
 class Stage {
-    version = "1.2.47";
+    version = "1.2.49";
     #scale = 1;
     #geometryPrecision = 3;
     get geometryPrecision() {
@@ -1018,7 +1018,7 @@ class Stage {
         this.undoManager.clear();
     }
     uninstall = () => {
-        this.board.remove();
+        this.#board.innerHTML = "";
         window.removeEventListener("pointerdown", this.#pointerdown, true);
         window.removeEventListener("pointermove", this.#pointermove);
         window.removeEventListener("pointerup", this.#pointerup);
