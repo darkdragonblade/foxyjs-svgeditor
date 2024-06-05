@@ -112,13 +112,13 @@ class Stage {
     get currentContainer() {
         return this.#currentContainer;
     }
-    set currentContainer(e) {
-        this.#currentContainer = e;
+    set currentContainer(val) {
+        this.#currentContainer = val;
         this.board.dispatchEvent(new CustomEvent("currentcontainerchange"));
     }
     #currentTool;
-    set currentTool(e) {
-        this.#currentTool = e;
+    set currentTool(val) {
+        this.#currentTool = val;
         this.board.dispatchEvent(new CustomEvent("currenttoolchange"));
     }
     get currentTool() {
