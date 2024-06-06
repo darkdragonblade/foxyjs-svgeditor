@@ -87,7 +87,7 @@ import ElementsGeometryManager from "./support/elementsGeometryManager";
 import ImportManager from "./support/importManager";
 import ExportManager from "./support/exportManager";
 class Stage {
-    version = "1.2.49";
+    version = "1.2.50";
     #scale = 1;
     #geometryPrecision = 3;
     get geometryPrecision() {

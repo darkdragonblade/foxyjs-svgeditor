@@ -15,11 +15,7 @@ class SVGImage {
 class SVGPath {
   constructor(params) {
     const { d, fill, stroke, strokeWidth } = params;
-    return fs`<path 
-      d="${d}
-      fill="${fill}"
-      stroke="${stroke}"
-      stroke-width="${strokeWidth}"></path>
+    return fs`<path  fill="${fill}" d="${d} stroke="${stroke}" stroke-width="${strokeWidth}"></path>
     `;
   }
 }
