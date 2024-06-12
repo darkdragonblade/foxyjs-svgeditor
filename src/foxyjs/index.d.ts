@@ -1,6 +1,7 @@
 
 import {
     SVGImage,
+    SVGForeignObject,
     SVGPath,
     SVGText,
     SVGRect,
@@ -86,6 +87,7 @@ declare class Stage {
 export {
     Stage,
     SVGImage,
+    SVGForeignObject,
     SVGPath,
     SVGText,
     SVGRect,

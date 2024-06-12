@@ -1,19 +1,20 @@
 import { ut, ct } from "./common";
-const translate = (t, e, l) => {
-    const r = DOMMatrix.fromMatrix(ct(t));
-    r.multiplySelf(ut(t).inverse());
-    r.translateSelf(e, l);
-    r.multiplySelf(ut(t));
-    t.setAttribute("transform", r.toString());
+const translate = (node, x, y) => {
+    const transform = DOMMatrix.fromMatrix(ct(node));
+    transform.multiplySelf(ut(node).inverse());
+    transform.translateSelf(x, y);
+    transform.multiplySelf(ut(node));
+    node.setAttribute("transform", transform.toString());
 };
-const scale = (t, e, l, r, i) => {
-    const s = DOMMatrix.fromMatrix(ct(t));
-    s.multiplySelf(ut(t).inverse());
-    s.translateSelf(r, i);
-    s.scaleSelf(e, l);
-    s.translateSelf(-r, -i);
-    s.multiplySelf(ut(t));
-    t.setAttribute("transform", s.toString());
+const scale = (node, scaleX, scaleY, x, y) => {
+    const transform = DOMMatrix.fromMatrix(ct(node));
+    transform.multiplySelf(ut(node).inverse());
+    transform.translateSelf(x, y);
+    transform.scaleSelf(scaleX, scaleY);
+    transform.translateSelf(-x, -y);
+    transform.multiplySelf(ut(node));
+    console.log(transform);
+    node.setAttribute("transform", transform.toString());
 };
 const rotate = (t, e, l, r) => {
     const i = DOMMatrix.fromMatrix(ct(t));

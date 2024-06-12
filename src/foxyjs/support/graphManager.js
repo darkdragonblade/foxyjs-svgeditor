@@ -19,6 +19,13 @@ class SVGPath {
     `;
   }
 }
+class SVGForeignObject {
+  constructor(params) {
+    const { x, y, width, height } = params;
+    return fs`<foreignObject  x="${x}" y="${y} width="${width}" height="${height}"></foreignObject>
+    `;
+  }
+}
 class SVGText {
   constructor(params) {
     const { x, y, fontSize, fontFamily, textContent, fill } = params;
@@ -319,6 +326,7 @@ class SVGPolygon {
 export {
   SVGImage,
   SVGPath,
+  SVGForeignObject,
   SVGText,
   SVGRect,
   SVGCircle,

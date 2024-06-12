@@ -17,6 +17,15 @@ declare class SVGPath {
     });
 }
 
+declare class SVGForeignObject {
+    constructor(params: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+    });
+}
+
 declare class SVGText {
     constructor(params: {
         x: number;
@@ -218,6 +227,7 @@ declare class SVGPolygon {
 
 export {
     SVGImage,
+    SVGForeignObject,
     SVGPath,
     SVGText,
     SVGRect,
