@@ -13,33 +13,32 @@ const scale = (node, scaleX, scaleY, x, y) => {
     transform.scaleSelf(scaleX, scaleY);
     transform.translateSelf(-x, -y);
     transform.multiplySelf(ut(node));
-    console.log(transform);
     node.setAttribute("transform", transform.toString());
 };
-const rotate = (t, e, l, r) => {
-    const i = DOMMatrix.fromMatrix(ct(t));
-    i.multiplySelf(ut(t).inverse());
-    i.translateSelf(l, r);
-    i.rotateSelf(e);
-    i.translateSelf(-l, -r);
-    i.multiplySelf(ut(t));
-    t.setAttribute("transform", i.toString());
+const rotate = (node, angle, x, y) => {
+    const transform = DOMMatrix.fromMatrix(ct(t));
+    transform.multiplySelf(ut(node).inverse());
+    transform.translateSelf(x, y);
+    transform.rotateSelf(angle);
+    transform.translateSelf(-x, -y);
+    transform.multiplySelf(ut(node));
+    node.setAttribute("transform", transform.toString());
 };
-const flipX = (t, e) => {
-    const l = new DOMMatrix([-1, 0, 0, 1, 2 * e, 0]);
-    const r = DOMMatrix.fromMatrix(ct(t));
-    r.multiplySelf(ut(t).inverse());
-    r.multiplySelf(l);
-    r.multiplySelf(ut(t));
-    t.setAttribute("transform", r.toString());
+const flipX = (node, val) => {
+    const l = new DOMMatrix([-1, 0, 0, 1, 2 * val, 0]);
+    const transform = DOMMatrix.fromMatrix(ct(node));
+    transform.multiplySelf(ut(node).inverse());
+    transform.multiplySelf(l);
+    transform.multiplySelf(ut(node));
+    node.setAttribute("transform", transform.toString());
 };
-const flipY = (t, e) => {
-    const l = new DOMMatrix([1, 0, 0, -1, 0, 2 * e]);
-    const r = DOMMatrix.fromMatrix(ct(t));
-    r.multiplySelf(ut(t).inverse());
-    r.multiplySelf(l);
-    r.multiplySelf(ut(t));
-    t.setAttribute("transform", r.toString());
+const flipY = (node, val) => {
+    const l = new DOMMatrix([1, 0, 0, -1, 0, 2 * val]);
+    const transform = DOMMatrix.fromMatrix(ct(node));
+    transform.multiplySelf(ut(node).inverse());
+    transform.multiplySelf(l);
+    transform.multiplySelf(ut(node));
+    node.setAttribute("transform", transform.toString());
 };
 const skewX = () => { };
 const skewY = () => { };

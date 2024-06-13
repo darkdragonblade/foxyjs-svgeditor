@@ -73,7 +73,6 @@ import RectTool from "./tools/rectTool";
 import EllipseTool from "./tools/ellipseTool";
 import OtherShapeTool from "./tools/otherShapeTool";
 import PathTool from "./tools/pathTool";
-import HybridTool from './tools/hybridTool';
 import UndoManager from "./support/undoManager";
 import ZoomManager from "./support/zoomManager";
 import AlignManager from "./support/alignManager";
@@ -244,10 +243,6 @@ class Stage {
     #pathTool;
     get pathTool() {
         return this.#pathTool;
-    }
-    #hybridTool;
-    get hybridTool() {
-        return this.#hybridTool;
     }
     #undoManager;
     get undoManager() {
@@ -466,7 +461,6 @@ class Stage {
         this.#ellipseTool = new EllipseTool(this);
         this.#otherShapeTool = new OtherShapeTool(this);
         this.#pathTool = new PathTool(this);
-        this.#hybridTool = new HybridTool(this);
         this.#textTool = new TextTool(this);
         this.#textHud = new TextHud(this);
         this.#viewTool = new ViewTool(this);
@@ -497,7 +491,6 @@ class Stage {
         this.#ellipseTool.disable();
         this.#otherShapeTool.disable();
         this.#pathTool.disable();
-        this.#hybridTool.disable();
         this.#textHud.disable();
         this.#freehandTool.disable();
         this.#splineTool.disable();
@@ -588,9 +581,6 @@ class Stage {
                 break;
             case "path-tool":
                 this.#pathTool.enable();
-                break;
-            case "hybrid-tool":
-                this.#hybridTool.enable();
                 break;
             case "vektor-tool":
                 this.#vektorTool.enable();
