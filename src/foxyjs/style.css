@@ -5,6 +5,7 @@
     --fx-paint-fill: rgb(216, 216, 216);
     --fx-paint-stroke: #000000;
     --fx-paint-stroke-width: 1;
+    --fx-paint-vector-effect: "non-scaling-stroke";
     --fx-text-fill: #333333;
     --fx-text-content: Hello Foxy.js;
     --fx-text-font-family: Arial;

@@ -15,14 +15,13 @@ class SVGImage {
 class SVGPath {
   constructor(params) {
     const { d, fill, stroke, strokeWidth } = params;
-    return fs`<path  fill="${fill}" d="${d} stroke="${stroke}" stroke-width="${strokeWidth}"></path>
-    `;
+    return fs`<path fill="${fill}" d="${d}" stroke="${stroke}" stroke-width="${strokeWidth}"></path>`;
   }
 }
 class SVGForeignObject {
   constructor(params) {
     const { x, y, width, height } = params;
-    return fs`<foreignObject  x="${x}" y="${y} width="${width}" height="${height}"></foreignObject>
+    return fs`<foreignObject x="${x}" y="${y}" width="${width}" height="${height}"></foreignObject>
     `;
   }
 }

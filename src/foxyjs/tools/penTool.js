@@ -86,6 +86,7 @@ class PenTool {
             fill: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-fill'),
             stroke: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke'),
             "stroke-width": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke-width'),
+            "vector-effect": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-vector-effect')
         }
         let g = null;
         let h = [];

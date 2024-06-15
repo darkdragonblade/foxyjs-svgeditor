@@ -63,6 +63,7 @@ class RectTool {
             fill: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-fill'),
             stroke: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke'),
             "stroke-width": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke-width'),
+            "vector-effect": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-vector-effect')
         }
 
         const radius = 0;

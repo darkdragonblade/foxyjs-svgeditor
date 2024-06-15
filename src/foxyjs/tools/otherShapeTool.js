@@ -107,6 +107,7 @@ class OtherShapeTool {
             fill: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-fill'),
             stroke: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke'),
             "stroke-width": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke-width'),
+            "vector-effect": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-vector-effect')
         }
         this.#stage.undoManager.checkpoint("frame", "#other-shape-tool.frame");
         this.#stage.snapManager.snapStart(!1);
@@ -200,6 +201,7 @@ class OtherShapeTool {
             fill: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-fill'),
             stroke: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke'),
             "stroke-width": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke-width'),
+            "vector-effect": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-vector-effect')
         }
         let o = 0.6;
         const { geometryPrecision: a, transformPrecision: i } = e;
@@ -281,6 +283,7 @@ class OtherShapeTool {
             fill: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-fill'),
             stroke: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke'),
             "stroke-width": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke-width'),
+            "vector-effect": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-vector-effect')
         }
         let { geometryPrecision: a, transformPrecision: i } = e;
         let o = 0;
@@ -365,6 +368,7 @@ class OtherShapeTool {
             fill: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-fill'),
             stroke: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke'),
             "stroke-width": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke-width'),
+            "vector-effect": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-vector-effect')
         }
         let a = 300;
         let i = 0.7;
@@ -454,6 +458,7 @@ class OtherShapeTool {
             fill: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-fill'),
             stroke: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke'),
             "stroke-width": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke-width'),
+            "vector-effect": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-vector-effect')
         }
         this.#stage.undoManager.checkpoint(
             "#triangle",
@@ -571,6 +576,7 @@ class OtherShapeTool {
             fill: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-fill'),
             stroke: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke'),
             "stroke-width": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke-width'),
+            "vector-effect": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-vector-effect')
         }
         let { geometryPrecision: o, transformPrecision: i } = n;
         let p = 0;
@@ -682,6 +688,7 @@ class OtherShapeTool {
             fill: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-fill'),
             stroke: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke'),
             "stroke-width": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke-width'),
+            "vector-effect": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-vector-effect')
         }
         let { geometryPrecision: o, transformPrecision: i } = n;
         let p = 0;
@@ -780,6 +787,7 @@ class OtherShapeTool {
             fill: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-fill'),
             stroke: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke'),
             "stroke-width": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke-width'),
+            "vector-effect": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-vector-effect')
         }
         let { geometryPrecision: a, transformPrecision: i } = e;
         this.#stage.undoManager.checkpoint("cog", "#other-shape-tool.cog");
@@ -881,6 +889,7 @@ class OtherShapeTool {
             fill: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-fill'),
             stroke: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke'),
             "stroke-width": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke-width'),
+            "vector-effect": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-vector-effect')
         }
         let c = 10;
         let g = 40;
@@ -935,6 +944,7 @@ class OtherShapeTool {
             fill: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-fill'),
             stroke: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke'),
             "stroke-width": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke-width'),
+            "vector-effect": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-vector-effect')
         }
         this.#stage.undoManager.checkpoint("cross", "#other-shape-tool.cross");
         this.#stage.snapManager.snapStart(!1);
@@ -1034,6 +1044,7 @@ class OtherShapeTool {
             fill: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-fill'),
             stroke: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke'),
             "stroke-width": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke-width'),
+            "vector-effect": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-vector-effect')
         }
         this.#stage.undoManager.checkpoint("spiral", "#other-shape-tool.spiral");
         this.#stage.snapManager.snapStart(!1);

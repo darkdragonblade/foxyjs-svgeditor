@@ -104,6 +104,7 @@ class FreehandTool {
             fill: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-fill'),
             stroke: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke'),
             "stroke-width": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke-width'),
+            "vector-effect": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-vector-effect')
         }
         let p = null;
         let g = [];

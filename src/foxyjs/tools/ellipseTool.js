@@ -58,6 +58,7 @@ class EllipseTool {
             fill: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-fill'),
             stroke: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke'),
             "stroke-width": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke-width'),
+            "vector-effect": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-vector-effect')
         }
         this.#stage.undoManager.checkpoint("ellipseangle", "ellipse-tool");
         this.#stage.snapManager.snapStart(false);

@@ -26,12 +26,8 @@ import {
 } from "../utils/common";
 import ee from "../utils/ee";
 let { abs: Rd, atan: Id, min: Bd, max: Ud } = Math;
-let { parseFloat: _d } = Number;
-let Fd = 12;
-let Nd = 12;
-let jd = 10;
-let Vd = Symbol();
-let Hd = Symbol();
+const STROKE_WIDTH = Symbol();
+const VECTOR_EFFECT = Symbol();
 let Wd = Symbol();
 let Yd = Symbol();
 class TransformTool {
@@ -283,20 +279,22 @@ class TransformTool {
       }
       return !0;
     });
-    for (let a of h)
-      if (!0 === r) {
-        let t = ut(a);
+    const curVectorEffect = getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-vector-effect');
 
-        let { scaleX: e, scaleY: i } = Oo(t);
-
-        let s = "left" === b || "right" === b ? e : i;
-        let r = getComputedStyle(a);
-        a[Vd] = a.style.getPropertyValue("stroke-width");
-        a[Hd] = a.style.getPropertyValue("vector-effect");
-        let l = Rd(s) * _d(r.getPropertyValue("stroke-width"));
-        a.style.setProperty("stroke-width", l);
-        a.style.setProperty("vector-effect", "non-scaling-stroke");
+    for (let node of h) {
+      if (r) {
+        let t = ut(node);
+        const { scaleX, scaleY } = Oo(t);
+        let s = "left" === b || "right" === b ? scaleX : scaleY;
+        const style = getComputedStyle(node);
+        node[STROKE_WIDTH] = node.style.getPropertyValue("stroke-width");
+        // node[VECTOR_EFFECT] = node.style.getPropertyValue("vector-effect");
+        node[VECTOR_EFFECT] = curVectorEffect;
+        const strokeWidth = curVectorEffect === "none" ? Rd(s) * parseFloat(style.getPropertyValue("stroke-width")) : parseFloat(style.getPropertyValue("stroke-width"));
+        node.style.setProperty("stroke-width", strokeWidth);
+        node.style.setProperty("vector-effect", "non-scaling-stroke");
       }
+    }
     if (this["Ws"](h)) {
       let [t, ...e] = h;
       let w = Symbol();
@@ -407,10 +405,10 @@ class TransformTool {
       (e = () => {
         window.removeEventListener("pointermove", i);
         window.removeEventListener("pointerup", e);
-        for (let t of h) {
-          if (!0 === r) {
-            t.style.setProperty("stroke-width", t[Vd]);
-            t.style.setProperty("vector-effect", t[Hd]);
+        for (let node of h) {
+          if (r) {
+            node.style.setProperty("stroke-width", node[STROKE_WIDTH]);
+            node.style.setProperty("vector-effect", node[VECTOR_EFFECT]);
           }
         }
         this.#stage.snapManager.snapEnd();
@@ -523,16 +521,18 @@ class TransformTool {
       }
       return !0;
     });
-    for (let a of f) {
-      a[Vd] = a.style.getPropertyValue("stroke-width");
-      a[Hd] = a.style.getPropertyValue("vector-effect");
-      let t = ut(a);
-      let { scaleX: e, scaleY: i } = Oo(t);
-      let s = (e + i) / 2;
-      let r = getComputedStyle(a);
-      let l = Rd(s) * _d(r.getPropertyValue("stroke-width"));
-      a.style.setProperty("stroke-width", l);
-      a.style.setProperty("vector-effect", "non-scaling-stroke");
+    const curVectorEffect = getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-vector-effect');
+    for (let node of f) {
+      node[STROKE_WIDTH] = node.style.getPropertyValue("stroke-width");
+      node[VECTOR_EFFECT] = curVectorEffect;
+      // node[VECTOR_EFFECT] = node.style.getPropertyValue("vector-effect");
+      let t = ut(node);
+      const { scaleX, scaleY } = Oo(t);
+      const scale = (scaleX + scaleY) / 2;
+      const style = getComputedStyle(node);
+      const strokeWidth = curVectorEffect === "none" ? Rd(scale) * parseFloat(style.getPropertyValue("stroke-width")) : parseFloat(style.getPropertyValue("stroke-width"));
+      node.style.setProperty("stroke-width", strokeWidth);
+      node.style.setProperty("vector-effect", "non-scaling-stroke");
     }
     if (this.Ws(f)) {
       let [s, ...t] = f;
@@ -612,9 +612,9 @@ class TransformTool {
       (e = () => {
         window.removeEventListener("pointermove", l);
         window.removeEventListener("pointerup", e);
-        for (let t of f) {
-          t.style.setProperty("stroke-width", t[Vd]);
-          t.style.setProperty("vector-effect", t[Hd]);
+        for (let node of f) {
+          node.style.setProperty("stroke-width", node[STROKE_WIDTH]);
+          node.style.setProperty("vector-effect", node[VECTOR_EFFECT]);
         }
       })
     );

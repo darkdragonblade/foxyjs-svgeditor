@@ -41,7 +41,9 @@ class TransformSelect {
             for (let e of t) this.#stage.selectedElements.has(e) && (s = !0);
             !1 === s && this.#ve(e);
             this.#stage.board.dispatchEvent(new CustomEvent("nativecontextmenu"));
-        } else this.#ye(e);
+        } else {
+            this.#ye(e);
+        }
     }
     #be(a) {
         const {
