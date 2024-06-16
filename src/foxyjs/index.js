@@ -57,6 +57,7 @@ import FreehandHud from "./tools/freehandHud";
 import FreehandTool from "./tools/freehandTool";
 import LineTool from './tools/lineTool';
 import SplineTool from "./tools/splineTool";
+import LineSegHud from './tools/lineSegHud';
 import CubicBezierSegHud from "./tools/cubicBezierSegHud";
 import PenTool from "./tools/penTool";
 import VektorTool from "./tools/vektor";
@@ -88,7 +89,7 @@ import ElementsGeometryManager from "./support/elementsGeometryManager";
 import ImportManager from "./support/importManager";
 import ExportManager from "./support/exportManager";
 class Stage {
-    version = "1.2.50";
+    version = "1.2.51";
     #scale = 1;
     #geometryPrecision = 3;
     get geometryPrecision() {
@@ -267,6 +268,10 @@ class Stage {
     #splineTool;
     get splineTool() {
         return this.#splineTool;
+    }
+    #lineSegHud;
+    get lineSegHud() {
+        return this.#lineSegHud;
     }
     #cubicBezierSegHud;
     get cubicBezierSegHud() {
@@ -472,10 +477,11 @@ class Stage {
         this.#shapeManager = new ShapeManager(this);
         this.#commands = new Commands(this);
         this.#splineTool = new SplineTool(this);
-        this.#lineTool = new LineTool(this);
         this.#freehandHud = new FreehandHud(this);
         this.#freehandTool = new FreehandTool(this);
+        this.#lineSegHud = new LineSegHud(this);
         this.#cubicBezierSegHud = new CubicBezierSegHud(this);
+        this.#lineTool = new LineTool(this);
         this.#penTool = new PenTool(this);
         this.#vektorTool = new VektorTool(this);
         this.#createdObserver();
@@ -516,6 +522,7 @@ class Stage {
                 break;
             case "line-tool":
                 this.#lineTool.enable();
+                this.#splineTool.enable();
                 break;
             case "pen-tool":
                 this.#penTool.enable();

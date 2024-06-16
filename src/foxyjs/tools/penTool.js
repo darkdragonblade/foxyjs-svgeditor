@@ -58,6 +58,15 @@ class PenTool {
         this.#stage.cubicBezierSegHud.hide();
         this.#stage.cubicBezierSegHud.hud.dispatchEvent(new CustomEvent("release"));
     };
+    close = () => {
+        const nodes = Array.from(this.#stage.selectedElements.keys());
+        nodes.forEach(node => {
+            if (node.localName === 'path') {
+                const d = node.getAttribute('d');
+                node.setAttribute('d', `${d} Z`);
+            }
+        });
+    }
     #paint = (event) => {
         const { clientX, clientY, buttons } = event;
         if (buttons > 1) return;
@@ -82,7 +91,7 @@ class PenTool {
         let l;
         let u;
         let o = this.#stage.currentContainer || this.#stage.currentWorkspace;
-        const d = {
+        const style = {
             fill: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-fill'),
             stroke: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke'),
             "stroke-width": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke-width'),
@@ -91,7 +100,7 @@ class PenTool {
         let g = null;
         let h = [];
         let p = -1;
-        let b = !1;
+        let b = false;
         let v = [];
         let n = new DOMPoint();
         this.#stage.splineTool.mode = "draw";
@@ -106,12 +115,12 @@ class PenTool {
             h = $e(t);
             p = e.subpathIndex;
             let s = h[p];
-            let i = ut(g, !0);
+            let i = ut(g, true);
             let a = new DOMPoint(
                 s.at(b ? 0 : -1).values.at(-2),
                 s.at(b ? 0 : -1).values.at(-1)
             );
-            ["R", "U"].includes(s[1]?.type) && (s = Re(s, !1));
+            ["R", "U"].includes(s[1]?.type) && (s = Re(s, false));
             let l = a.matrixTransform(i);
             this.#stage.cubicBezierSegHud.show(g, l, e.position, s);
         }
@@ -225,7 +234,7 @@ class PenTool {
                 p = 0;
                 g = Zi("svg:path");
                 o.append(g);
-                ja(g, d);
+                ja(g, style);
             }
             ["R", "U"].includes(h[p][1]?.type) && (h[p] = Re(h[p], !1));
             !1 === b
@@ -303,9 +312,13 @@ class PenTool {
                 Ae(t, e, this.#stage.geometryPrecision);
                 g.replaceWith(t);
                 v.push(g, t);
-                const l = structuredClone(
-                    Array.from(this.#stage.selectedElements.keys())
-                );
+
+                // const l = structuredClone(
+                //     Array.from(this.#stage.selectedElements.keys())
+                // );
+
+                const l = Array.from(this.#stage.selectedElements.keys());
+
                 this.#stage.selectedElements.clear();
                 l.forEach((e) => {
                     this.#stage.selectedElements.set(e === g ? t : e);
@@ -446,7 +459,7 @@ class PenTool {
                 p = 0;
                 g = Zi("svg:path");
                 o.append(g);
-                ja(g, d);
+                ja(g, style);
             }
             let c = a[e.subpathIndex];
             a = a.filter((e) => e !== c);
@@ -484,9 +497,10 @@ class PenTool {
                 Ae(t, u, this.#stage.geometryPrecision);
                 g.replaceWith(t);
                 v.push(g, t);
-                const r = structuredClone(
-                    Array.from(this.#stage.selectedElements.keys())
-                );
+                // const r = structuredClone(
+                //     Array.from(this.#stage.selectedElements.keys())
+                // );
+                const r = Array.from(this.#stage.selectedElements.keys());
                 this.#stage.selectedElements.clear();
                 r.forEach((e) => {
                     this.#stage.selectedElements.set(e === g ? t : e);
@@ -504,9 +518,10 @@ class PenTool {
                 i.setAttribute("href", "#" + e);
                 i.closest("text").removeAttribute("transform");
             }
-            let n = window.structuredClone(
-                Array.from(this.#stage.selectedElements.keys())
-            );
+            // let n = window.structuredClone(
+            //     Array.from(this.#stage.selectedElements.keys())
+            // );
+            const n = Array.from(this.#stage.selectedElements.keys());
             !1 === s.isConnected && (n = n.filter((e) => e !== s));
             null === g.closest("defs") &&
                 void 0 === n.find((e) => e === g || e.contains(g)) &&
@@ -588,9 +603,10 @@ class PenTool {
                 Ae(t, e, this.#stage.geometryPrecision);
                 g.replaceWith(t);
                 v.push(g, t);
-                const s = structuredClone(
-                    Array.from(this.#stage.selectedElements.keys())
-                );
+                // const s = structuredClone(
+                //     Array.from(this.#stage.selectedElements.keys())
+                // );
+                const s = Array.from(this.#stage.selectedElements.keys());
                 this.#stage.selectedElements.clear();
                 s.forEach((e) => {
                     this.#stage.selectedElements.set(e === g ? t : e);

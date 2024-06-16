@@ -2,40 +2,21 @@ import { Zi, Ae, $e, Ie, pt, Te, ut, te, Kt } from "../utils/common";
 
 class LineTool {
     #stage;
-    hud = document.querySelector("#line-hud");
     #outline;
     Ft;
-    #pointerdownEvent;
+    #pointerdown;
+    #disabled = false;
 
-    get x1() {
-        return this.#outline.x1.baseVal.value;
-    }
-    get y1() {
-        return this.#outline.y1.baseVal.value;
-    }
-    get x2() {
-        return this.#outline.x2.baseVal.value;
-    }
-    get y2() {
-        return this.#outline.y2.baseVal.value;
-    }
-
-    get points() {
-        return [...this.#outline.points].map((t) => DOMPoint.fromPoint(t));
-    }
     get enabled() {
-        return this.hud.hasAttribute("enabled");
+        return this.#stage.lineSegHud.hud.hasAttribute("enabled");
     }
     set enabled(val) {
         val
-            ? this.hud.setAttribute("enabled", "")
-            : this.hud.removeAttribute("enabled");
+            ? this.#stage.lineSegHud.hud.setAttribute("enabled", "")
+            : this.#stage.lineSegHud.hud.removeAttribute("enabled");
     }
     constructor(stage) {
         this.#stage = stage;
-        this.hud.innerHTML =
-            '<line uid="outline" class="outline" x1="0" y1="0" x2="0" y2="0"></line>';
-        this.#outline = this.hud.querySelector('[uid="outline"]');
     }
 
     enable = () => {
@@ -43,8 +24,8 @@ class LineTool {
         this.#stage.board.style.cursor = "crosshair";
         this.#stage.workspaces.addEventListener(
             "pointerdown",
-            (this.#pointerdownEvent = (e) => {
-                this.#pointerdown(e);
+            (this.#pointerdown = ($event) => {
+                this.#paint($event);
             })
         );
     };
@@ -53,8 +34,25 @@ class LineTool {
         this.enabled = false;
     };
 
-    #pointerdown = ($event) => { };
+    #paint = (event) => {
+        const { clientX, clientY, buttons } = event;
+        if (buttons > 1) return;
+        if (!this.#disabled) {
+            this.#disabled = true;
+            this.#painting(new DOMPoint(clientX, clientY));
+        }
+    };
 
+    #painting = ({ x, y }) => {
+        const layer = this.#stage.currentContainer || this.#stage.currentWorkspace;
+        const style = {
+            fill: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-fill'),
+            stroke: getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke'),
+            "stroke-width": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-stroke-width'),
+            "vector-effect": getComputedStyle(document.documentElement).getPropertyValue('--fx-paint-vector-effect')
+        }
+
+    }
 
     show = (aB, aC) => {
         this["hasAttribute"](drawing) && this['hide']();

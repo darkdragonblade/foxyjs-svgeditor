@@ -19,7 +19,7 @@ class Layout {
                 <g id="smart-guides-hud"></g>
                 <g id="grid-hud"></g>
                 <g id="spline-hud"></g>
-                <g id="line-hud"></g>
+                <g id="line-seg-hud"></g>
                 <g id="cubic-bezier-seg-hud"></g>
                 <g id="text-hud"></g>
                 <g id="freehand-hud"></g>

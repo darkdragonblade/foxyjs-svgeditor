@@ -306,6 +306,16 @@ svg[foxyjs] {
 
 #vektor-hud [uid="text"] {}
 
+/** line seg hud **/
+
+#line-seg-hud [uid="outline"] {
+    fill: none;
+    stroke: red;
+    stroke-width: 2.5;
+    vector-effect: non-scaling-stroke;
+    pointer-events: none;
+}
+
 /** cubic bezier seg hud **/
 
 #cubic-bezier-seg-hud [uid="control-line-1"],
