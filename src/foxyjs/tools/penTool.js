@@ -59,6 +59,10 @@ class PenTool {
         this.#stage.cubicBezierSegHud.hud.dispatchEvent(new CustomEvent("release"));
     };
     close = () => {
+        this.#stage.undoManager.checkpoint(
+            "cubic-bezier",
+            "#spline-tool.cubic-bezier"
+        );
         const nodes = Array.from(this.#stage.selectedElements.keys());
         nodes.forEach(node => {
             if (node.localName === 'path') {

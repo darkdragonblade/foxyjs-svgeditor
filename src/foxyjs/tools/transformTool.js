@@ -203,7 +203,6 @@ class TransformTool {
     let s = e.target;
     let r = new DOMPoint(e.clientX, e.clientY);
     let l = r;
-
     s.addEventListener(
       "pointermove",
       (i = (t) => {
