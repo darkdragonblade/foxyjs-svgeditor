@@ -525,7 +525,7 @@ class PenTool {
             // let n = window.structuredClone(
             //     Array.from(this.#stage.selectedElements.keys())
             // );
-            const n = Array.from(this.#stage.selectedElements.keys());
+            let n = Array.from(this.#stage.selectedElements.keys());
             !1 === s.isConnected && (n = n.filter((e) => e !== s));
             null === g.closest("defs") &&
                 void 0 === n.find((e) => e === g || e.contains(g)) &&
