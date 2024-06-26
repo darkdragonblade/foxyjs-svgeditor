@@ -1032,6 +1032,7 @@ class SplineTool {
     Ae(s, n, this.#stage.geometryPrecision);
   };
   Vi = (d) => {
+    if (this.#stage.currentTool === 'line-tool') return;
     if (d.buttons <= 1) {
       let n;
       let a;
@@ -1676,6 +1677,8 @@ class SplineTool {
     this.splineHud.dispatchEvent(new CustomEvent("selectednodeschange"));
   };
   Gi = (e = "smooth") => {
+    // this['v'][Gq(0x1180)][Gq(0xdbd)](ay),
+    this.editor.deleteNode()
     this.splineHud.dispatchEvent(new CustomEvent("selectednodeschange"));
   };
   Fi = () => {
