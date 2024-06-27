@@ -45,9 +45,10 @@ class LineTool {
         });
     }
 
-    #be = ($event) => {
+    #be = (event) => {
+        const { clientX, clientY, buttons } = event;
+        if (buttons > 1) return;
         if (!this.#disabled) {
-            const { clientX, clientY } = $event;
             this.#disabled = true;
             this.#Je(new DOMPoint(clientX, clientY));
         }
@@ -61,7 +62,6 @@ class LineTool {
             );
     }
     #Je = (ay) => {
-
         let az;
         let aA;
         let aB;
@@ -102,8 +102,10 @@ class LineTool {
             let aZ = new DOMPoint(aX.at(aM ? 0x0 : -0x1).values.at(-0x2), aX.at(aM ? 0x0 : -0x1).values.at(-0x1)).matrixTransform(aY);
             this.#stage.lineSegHud.show(aJ, aZ);
         }
-        this.#stage.workspaces.addEventListener('pointerup', az = b0 => {
-            let b1 = new DOMPoint(b0.clientX, b0.clientY);
+        this.#stage.workspaces.addEventListener('pointerup', az = (event) => {
+            const { clientX, clientY, button } = event;
+            if (button > 0) return;
+            let b1 = new DOMPoint(clientX, clientY);
             null === aJ ? ay instanceof DOMPoint && Kt(ay, b1) >= 0x4 && aP() : Kt(aO, b1) < 0x4 ? aT() : aP(),
                 aO = b1;
         });
