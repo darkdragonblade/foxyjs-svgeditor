@@ -27,12 +27,16 @@ class SVGForeignObject {
 }
 class SVGText {
   constructor(params) {
-    const { x, y, fontSize, fontFamily, textContent, fill } = params;
+    const { x, y, fontSize, fontFamily, textContent, fill, fontWeight, letterSpacing, textAnchor, writingMode } = params;
     return fs`<text 
       x="${x}" 
       y="${y}" 
       font-size="${fontSize}" 
       font-family="${fontFamily || "Arial"}" 
+      font-weight="${fontWeight}"
+      letter-spacing="${letterSpacing}"
+      text-anchor="${textAnchor}"
+      writing-mode="${writingMode}"
       fill="${fill}">${textContent}</text>
     `;
   }

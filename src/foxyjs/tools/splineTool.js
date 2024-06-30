@@ -420,6 +420,7 @@ class SplineTool {
         : e.target.matches(".curve-grippie > path") && this.qi(e);
   };
   Ni = (n) => {
+    console.log('Ni');
     if (n.buttons > 1) return;
     let a = !1;
     let o = n.target.closest(".primary-node-grippie");

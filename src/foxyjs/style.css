@@ -118,6 +118,11 @@ svg[foxyjs] {
     filter: drop-shadow(0 0 1px black);
 }
 
+#transform-hud [uid="tranform-frame"]>path {
+    fill: var(--fx-scale-grippies-fill);
+    fill-opacity: 0.3;
+}
+
 /** rubberband hud **/
 
 #rubber-band-hud [uid="rubber-band"] {

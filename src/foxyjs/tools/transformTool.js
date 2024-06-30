@@ -40,6 +40,7 @@ class TransformTool {
   ["#rotate-grippies"];
   ["#skew-grippies"];
   ["#origin-grippie"];
+  ["tranform-frame"];
   #grippies;
   canEdit = true;
   Os = false;
@@ -67,6 +68,9 @@ class TransformTool {
     this.Is = ks(this.xi, 250, this);
     this.#transformHud.innerHTML = `
       <g uid="grippies">
+        <g uid="tranform-frame">
+          <path></path>
+        </g>
         <g uid="scale-grippies">
           <rect class="grippie" data-position="top"></rect>
           <rect class="grippie" data-position="left"></rect>
@@ -95,6 +99,7 @@ class TransformTool {
     this["#scale-grippies"] = document.querySelector('[uid="scale-grippies"]');
     this["#rotate-grippies"] = document.querySelector('[uid="rotate-grippies"]');
     this["#skew-grippies"] = document.querySelector('[uid="skew-grippies"]');
+    this['#tranform-frame'] = document.querySelector('[uid="tranform-frame"]');
     this.#grippies = this.#transformHud.querySelector('[uid="grippies"]');
     for (let t of this["#scale-grippies"].children) {
       const e = t;
@@ -703,6 +708,7 @@ class TransformTool {
         );
         a["bottom-right"].x.baseVal.value = y.x - i / 2;
         a["bottom-right"].y.baseVal.value = y.y - i / 2;
+
       } else {
         let t = ut(this.#transformHud).inverse();
         let e = h.map((t) => Yi(t));
@@ -724,6 +730,7 @@ class TransformTool {
         a["bottom-left"].y.baseVal.value = l.y + l.height - i / 2;
         a["bottom-right"].x.baseVal.value = l.x + l.width - i / 2;
         a["bottom-right"].y.baseVal.value = l.y + l.height - i / 2;
+
       }
       a["top"].style.visibility = 0 === l.height ? "hidden" : null;
       a["bottom"].style.visibility = 0 === l.height ? "hidden" : null;
@@ -737,6 +744,15 @@ class TransformTool {
         0 === l.width || 0 === l.height ? "hidden" : null;
       a["bottom-right"].style.visibility =
         0 === l.width || 0 === l.height ? "hidden" : null;
+
+      const framePath = this['#tranform-frame'].querySelector('path');
+      framePath.style.pointerEvents = 'none';
+      const d = `
+      M ${a['top-left'].x.baseVal.value + i / 2} ${a['top-left'].y.baseVal.value + i / 2} 
+      L ${a['top-right'].x.baseVal.value + i / 2} ${a['top-right'].y.baseVal.value + i / 2} 
+      L ${a['bottom-right'].x.baseVal.value + i / 2} ${a['bottom-right'].y.baseVal.value + i / 2}
+      L ${a['bottom-left'].x.baseVal.value + i / 2} ${a['bottom-left'].y.baseVal.value + i / 2} Z`;
+      framePath.setAttribute('d', d);
     }
   };
   Xs = () => {
@@ -792,6 +808,15 @@ class TransformTool {
         0 === d.width || 0 === d.height ? "hidden" : null;
       g["bottom-right"].style.visibility =
         0 === d.width || 0 === d.height ? "hidden" : null;
+
+      const framePath = this['#tranform-frame'].querySelector('path');
+      framePath.style.pointerEvents = 'none';
+      const dd = `
+      M ${g['top-left'].x.baseVal.value + n / 2} ${g['top-left'].y.baseVal.value + n / 2} 
+      L ${g['top-right'].x.baseVal.value + n / 2} ${g['top-right'].y.baseVal.value + n / 2} 
+      L ${g['bottom-right'].x.baseVal.value + n / 2} ${g['bottom-right'].y.baseVal.value + n / 2}
+      L ${g['bottom-left'].x.baseVal.value + n / 2} ${g['bottom-left'].y.baseVal.value + n / 2} Z`;
+      framePath.setAttribute('d', dd);
     }
   };
   Zs = () => {
