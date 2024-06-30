@@ -119,8 +119,13 @@ svg[foxyjs] {
 }
 
 #transform-hud [uid="tranform-frame"]>path {
-    fill: var(--fx-scale-grippies-fill);
-    fill-opacity: 0.3;
+    fill: var(--fx-rubberband-fill);
+    fill-opacity: var(--fx-rubberband-fill-opacity);
+    stroke: var(--fx-rubberband-stroke);
+    stroke-opacity: var(--fx-rubberband-stroke-opacity);
+    stroke-width: var(--fx-rubberband-stroke-width);
+    pointer-events: none;
+    vector-effect: non-scaling-stroke;
 }
 
 /** rubberband hud **/
